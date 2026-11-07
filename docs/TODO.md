@@ -62,15 +62,12 @@ order within each section. Tick items off or delete them as they are done.
   (`actions/checkout` v7.0.1) and #6 (`docker/login-action` v4.7.0); closed
   #9 and #10 in favor of the v3 upgrade below.
 
-- [ ] **Node 20 deprecation: move the redhat actions to v3.** CI warns that
-  `redhat-actions/buildah-build` and `redhat-actions/push-to-registry` v2
-  target Node 20, which GitHub is retiring, and v2 is now formally
-  deprecated. Both have a v3 on Node 24 (`buildah-build` v3.1.0 also fixes
-  silent data corruption with fuse-overlayfs on ubuntu-24.04 runners, the
-  runner this workflow uses). The other v3 changes are new optional inputs,
-  so the existing inputs should work unchanged. Open it as a PR pinned by
-  SHA and merge once its CI passes. Blocked until sigstore's Rekor outage
-  (2026-11-07) is over, because CI cannot install cosign until then.
+- [x] **Node 20 deprecation: move the redhat actions to v3.** Done
+  2026-11-07 in #13: `buildah-build` v3.1.0 and `push-to-registry` v3.0.0,
+  both on Node 24, pinned by SHA. The post-merge build passed every step,
+  including push and signing, with no Node 20 warnings. (It waited a few
+  hours on a sigstore Rekor outage, during which CI could not install cosign;
+  host-side `cosign verify` kept working because it checks offline.)
 
 - [ ] **Shrink the weekly download.** The whole app layer (Signal, Claude's
   dependencies, qemu) is one `RUN`, so every daily build changes about 1 GB
