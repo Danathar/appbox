@@ -1,0 +1,26 @@
+{
+    "$comment": "Self-tuning values for the scheduled checks. nightly.* is read by .github/workflows/nightly-compliance.yml on every run. scripts/auto-qa-tuner.mjs (.github/workflows/auto-qa.yml, weekly) reads what the last nightly runs measured and proposes new values, always inside each value's min and max. It never commits: a proposal goes into one tracking issue and a person or agent applies it in a pull request. rules.* controls the tuner itself and is not tuned.",
+    "nightly": {
+        "image_max_age_days": {
+            "value": 3,
+            "min": 2,
+            "max": 7,
+            "note": "The nightly fails when ghcr.io/danathar/appbox:latest was created more than this many days ago. build-appbox runs daily, so a healthy image is less than a day old when the nightly checks it. The tuner moves it one day per week toward the observed rules.age_percentile age, rounded up to whole days, plus rules.age_slack_days."
+        },
+        "network_retries": {
+            "value": 2,
+            "min": 1,
+            "max": 5,
+            "note": "Extra attempts the nightly allows each registry operation (skopeo inspect, cosign verify, podman pull) before calling it a failure. The tuner raises it when operations keep succeeding only on their last allowed attempt, and lowers it after a long run of nights where nothing needed a retry."
+        }
+    },
+    "rules": {
+        "window_runs": 20,
+        "min_runs": 7,
+        "age_percentile": 75,
+        "age_slack_days": 1,
+        "raise_retries_when_last_attempt_saves": 2,
+        "lower_retries_after_clean_runs": 14,
+        "note": "window_runs: how many recent completed nightly runs on main the tuner reads (at most 100). min_runs: below this many runs that recorded measurements it proposes nothing. age_percentile: a percentile, not the maximum, so a few nights of failed builds do not loosen the staleness threshold. raise_retries_when_last_attempt_saves: this many runs where some operation succeeded only on its final allowed attempt raise network_retries by one. lower_retries_after_clean_runs: this many most recent runs with no retry at all lower it by one."
+    }
+}

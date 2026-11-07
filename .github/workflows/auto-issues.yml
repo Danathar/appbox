@@ -1,0 +1,174 @@
+name: Auto issues
+
+# Turns a red run on main into one tracking issue per workflow, and closes
+# that issue when the workflow passes on main again.
+#
+# The gap it fills: a scheduled run that fails tells nobody (GitHub emails only
+# whoever last edited the cron line), and a red push to main has no pull
+# request to show it. Here that matters more than usual, because main is live:
+# every enrolled machine fast-forwards to it, and they pull the image that
+# build-appbox publishes.
+#
+# Watched workflows, by their `name:` (not file name; renaming one silently
+# disconnects it, so keep this list in step):
+#   build-appbox         .github/workflows/build-appbox.yml (push and daily)
+#   CI                   .github/workflows/ci.yml (push to main)
+#   Nightly compliance   .github/workflows/nightly-compliance.yml
+#   Agent audit trail    .github/workflows/agent-audit.yml (monthly)
+#   Auto-QA              .github/workflows/auto-qa.yml (weekly)
+#
+# Rules:
+#   - Only runs on main count. A failure opens an issue only for a `schedule`
+#     or `push` run; a dispatched run has a person watching it. A success of a
+#     `schedule`, `push` or `workflow_dispatch` run closes the issue, so a
+#     person can confirm a fix by running the workflow by hand.
+#   - Pull request runs are ignored: they say nothing about main.
+#   - `cancelled` and `skipped` are neither pass nor fail and change nothing.
+#     build-appbox cancels superseded runs, which is normal.
+#   - One issue per workflow, titled `Scheduled run failing: <name>`, matched by
+#     exact title AND by the Actions bot as author, so an issue anyone else
+#     opens with that title is never reused or closed. Issues are listed, not
+#     searched, because the search index lags.
+#
+# It checks nothing out, runs no code from the watched run and uses no
+# third-party action; it only runs `gh`. `workflow_run` always runs the copy
+# of this file on the default branch, so a pull request cannot change it.
+
+on:
+  workflow_run:
+    workflows: [build-appbox, CI, Nightly compliance, Agent audit trail, Auto-QA]
+    types: [completed]
+    branches: [main]
+
+# Two completions of the same workflow must not both see "no issue open" and
+# file two, so runs for one workflow are serialized. A group holds one pending
+# run, so a newer completion of the same workflow can replace a pending one
+# before it runs. That loses nothing that matters: the newest result is the
+# current state of main for that workflow, and that is what gets tracked.
+concurrency:
+  group: auto-issues-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  track:
+    name: Open, update or close the tracking issue
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Event fields reach the shell only as environment variables; a
+          # branch name or commit message is whatever its author wrote.
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+
+          if [ "$HEAD_BRANCH" != "$DEFAULT_BRANCH" ]; then
+            echo "$WORKFLOW ran on $HEAD_BRANCH, not $DEFAULT_BRANCH; nothing to track."
+            exit 0
+          fi
+          case "$EVENT" in
+            schedule|push|workflow_dispatch) ;;
+            *)
+              echo "$WORKFLOW ran on a $EVENT event; only schedule, push and dispatch runs on $DEFAULT_BRANCH are tracked."
+              exit 0
+              ;;
+          esac
+
+          case "$CONCLUSION" in
+            failure|timed_out|startup_failure) failed=true ;;
+            success) failed=false ;;
+            *)
+              echo "$WORKFLOW concluded $CONCLUSION; leaving any tracking issue as it is."
+              exit 0
+              ;;
+          esac
+          if [ "$failed" = true ] && [ "$EVENT" = workflow_dispatch ]; then
+            echo "$WORKFLOW failed on a dispatched run; whoever started it is watching. Not opening an issue."
+            exit 0
+          fi
+
+          title="Scheduled run failing: $WORKFLOW"
+
+          # Assigned before use so a failed listing fails the step under
+          # `set -e` instead of reading as "no issue open" and filing a
+          # duplicate.
+          open="$(gh issue list --repo "$REPO" --state open --limit 1000 \
+            --json number,title,author \
+            --jq '.[] | [.number, .title, .author.login] | @tsv')"
+          number=""
+          while IFS=$'\t' read -r issue_number issue_title issue_author; do
+            [ "$issue_title" = "$title" ] || continue
+            case "$issue_author" in
+              app/github-actions|github-actions\[bot\]|github-actions)
+                number="$issue_number"
+                break
+                ;;
+            esac
+          done <<< "$open"
+
+          if [ "$failed" = false ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$REPO" \
+                --comment "Passed again on \`$DEFAULT_BRANCH\` ($EVENT): $RUN_URL (commit $HEAD_SHA). Closing."
+              echo "$WORKFLOW passed; closed #$number."
+            else
+              echo "$WORKFLOW passed and no tracking issue is open."
+            fi
+            exit 0
+          fi
+
+          case "$WORKFLOW" in
+            build-appbox)
+              next='The image was not rebuilt or not published, so enrolled machines keep the previous image at their next recreate. If the base image moved to a new Ubuntu release, the build fails on purpose until UBUNTU_VERSION in ContainerFiles/appbox is bumped. A failure in the signing steps means the SIGNING_SECRET secret no longer matches cosign.pub.'
+              ;;
+            CI)
+              next='main is live: enrolled machines run host/appbox-update from it on their next timer run. Find the commit that broke it and fix or revert it; never force-push main.'
+              ;;
+            "Nightly compliance")
+              next='The failed job names the check: Shellcheck, actionlint, Published image (signature, staleness, or Claude Desktop baked into the image) or Repository policies.'
+              ;;
+            "Agent audit trail")
+              next='An agent pull request merged in the window broke an audit rule (a commit without Signed-off-by, a hive pull request without its signature line, a merge with a required check not green, or a merge while it carried the hold label). The run summary names each one.'
+              ;;
+            Auto-QA)
+              next='The tuner could not read the nightly runs or the tuning file. Its proposals go to their own issue; this one means the workflow itself broke.'
+              ;;
+            *)
+              next='Open the run and read the failed step.'
+              ;;
+          esac
+
+          if [ -n "$number" ]; then
+            printf '%s\n' \
+              "Failed again (\`$CONCLUSION\`, $EVENT): $RUN_URL" \
+              "" \
+              "Commit: $HEAD_SHA" \
+              | gh issue comment "$number" --repo "$REPO" --body-file -
+            echo "$WORKFLOW failed again; commented on #$number."
+          else
+            printf '%s\n' \
+              "**The \`$WORKFLOW\` workflow failed on \`$DEFAULT_BRANCH\` ($EVENT run).**" \
+              "" \
+              "- Run: $RUN_URL" \
+              "- Conclusion: \`$CONCLUSION\`" \
+              "- Commit: $HEAD_SHA" \
+              "" \
+              "$next" \
+              "" \
+              "\`.github/workflows/auto-issues.yml\` opened this issue. It comments here on each further failure and closes the issue when the next run on \`$DEFAULT_BRANCH\` passes." \
+              | gh issue create --repo "$REPO" --title "$title" --body-file -
+            echo "$WORKFLOW failed; opened a tracking issue."
+          fi
