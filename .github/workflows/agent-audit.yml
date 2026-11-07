@@ -5,7 +5,7 @@ name: Agent audit trail
 # definition of "agent pull request" are in its header; tests in
 # scripts/tests/ai-audit-report.test.mjs).
 #
-# appbox runs on a fully autonomous hive: agent pull requests merge on their
+# appbox runs on an autonomous hive: agent pull requests merge on their
 # own once the required checks pass, on every risk tier. So a bot merging is
 # expected and is not reported. The audit checks that each automatic merge
 # kept the rules that make that safe:

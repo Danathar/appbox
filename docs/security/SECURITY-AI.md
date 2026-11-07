@@ -17,7 +17,7 @@ appbox is a few shell scripts and an image definition, but:
   access to their home directory, their session bus (notifications, KWallet
   through Signal) and podman. The image is signature-checked before use; the
   script is not (README, "Trust tradeoff").
-- **There is no human merge gate.** appbox runs on a fully autonomous hive.
+- **There is no human merge gate.** appbox runs on an autonomous hive.
   Agent pull requests merge once the required check `test` passes, on every
   tier ([risk tiers](../risk-tiers.md)). A Tier 2 change reaches machines
   without anyone reading it. The policies, the tests and the e2e image build

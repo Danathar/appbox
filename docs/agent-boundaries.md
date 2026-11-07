@@ -8,7 +8,7 @@ and complements [AGENTS.md](../AGENTS.md) and the
 
 ## No human-merge gate
 
-appbox runs on a fully autonomous hive. **No tier needs a person to merge.**
+appbox runs on an autonomous hive. **No tier needs a person to merge.**
 An agent pull request merges once the required checks pass (CI's aggregate
 `test` job), Tier 2 included. The tiers decide how much scrutiny a change
 gets before that, not who clicks merge. The owner's brake is the `hold`

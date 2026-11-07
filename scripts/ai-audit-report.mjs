@@ -4,7 +4,7 @@
  * Run monthly by .github/workflows/agent-audit.yml; tests in
  * scripts/tests/ai-audit-report.test.mjs (fixtures only, no network).
  *
- * appbox runs on a fully autonomous hive: agent pull requests merge on their
+ * appbox runs on an autonomous hive: agent pull requests merge on their
  * own once the required checks pass, on every risk tier. So "merged by a bot"
  * is the normal path and is not a finding. What this audit reads back instead
  * is whether each automatic merge kept the rules that make autonomy safe.
