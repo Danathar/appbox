@@ -1,0 +1,254 @@
+# Claude Code on demand. Someone with write access mentions `@claude` in an
+# issue comment, a PR conversation comment, a PR review, or an inline review
+# comment, and the Claude Code GitHub Action answers, or makes the change on a
+# branch and offers it as a pull request.
+#
+# Why it is built this way: `main` is live. Every enrolled machine
+# fast-forwards to `main` and runs `host/appbox-update` from it, so nothing an
+# agent does here may land on `main` except through a pull request and the
+# required checks. Rules for agents are in AGENTS.md, which the agent reads
+# first (CLAUDE.md is loaded automatically).
+#
+# Gating, in order:
+#   1. The job-level `if:` skips (a grey run, not red) bot events, comments
+#      without `@claude`, `/ai-fix` comments (ai-fix.yml handles those), and
+#      authors whose association is not OWNER, MEMBER or COLLABORATOR.
+#   2. The collaborator-permission API must say admin, maintain or write. A
+#      read-only collaborator passes step 1 but stops here, with a notice.
+#   3. For a PR: the head branch must be in this repository (a fork branch is
+#      untrusted code, and this job holds a write token and an Anthropic
+#      credential), the PR must be open, its head must not be `main`, and it
+#      must not carry the `hold` label (the owner's brake).
+#   4. With neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN set, the job
+#      writes a step summary saying so and skips the agent. It exits 0 and
+#      never turns anything red. Set one of the two secrets to enable it.
+#
+# How it is kept off `main`:
+#   - On an issue the action creates a `claude/issue-<n>-...` branch; on a PR
+#     it works on the PR's head branch.
+#   - A pre-push hook, installed outside the workspace (`core.hooksPath` under
+#     $RUNNER_TEMP, where the agent's edit permission does not reach), refuses
+#     any push to `main`, any tag and any branch deletion. The action's own
+#     push wrapper forbids flags, so `--no-verify` cannot skip the hook.
+#   - The branch ruleset on `main` (required checks, no direct pushes) is the
+#     real control; the hook and the tool allowlist are speed bumps on top.
+#   Tier 2 paths (see docs/risk-tiers.md) therefore change only through a PR.
+#   The agent is told to state the machine impact of such a change in the PR.
+#
+# The tool allowlist is a speed bump, not a sandbox. Git and gh commands are
+# listed one by one: a bare `git:*` would allow `git -c alias.x=!cmd x`, and
+# `gh api` would allow `-X PUT .../merge`. It cannot stop code the agent writes
+# and then runs through `bats tests/unit`, so treat everything the agent reads
+# (issue bodies, comments) as possible prompt injection. Mitigations: only
+# people with write access can trigger it, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`
+# strips credentials from subprocess environments, and the ruleset gates `main`.
+#
+# No `pull_request_target`: with write permissions it is the classic
+# privilege-escalation shape. `issue_comment` runs from the default branch's
+# copy of this file.
+#
+# Checks on agent pushes: commits pushed and PRs opened with the workflow's
+# GITHUB_TOKEN do not start other workflows (a GitHub rule against recursive
+# runs), so CI does not run on them by itself. The agent's closing comment says
+# so, and a maintainer re-runs checks (close and reopen the PR, or push a
+# commit) before the required checks can pass.
+
+name: Claude
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  claude:
+    if: >-
+      github.event.sender.type != 'Bot' && (
+        (
+          github.event_name != 'pull_request_review' &&
+          contains(github.event.comment.body, '@claude') &&
+          !startsWith(github.event.comment.body, '/ai-fix') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+        ) || (
+          github.event_name == 'pull_request_review' &&
+          contains(github.event.review.body, '@claude') &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Check requester and target
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          IS_PR: ${{ github.event.issue.pull_request != null || github.event.pull_request != null }}
+        run: |
+          set -euo pipefail
+          ref=""
+          reason=""
+          role=$(gh api "repos/$GH_REPO/collaborators/$ACTOR/permission" --jq '.permission' 2>/dev/null || echo none)
+          case "$role" in
+            admin|maintain|write) ;;
+            *) reason="@$ACTOR does not have write access to this repository (got '$role')." ;;
+          esac
+          if [ -z "$reason" ] && [ "$IS_PR" = "true" ]; then
+            IFS=$'\t' read -r cross state head held < <(gh pr view "$NUM" --repo "$GH_REPO" \
+              --json isCrossRepository,state,headRefName,labels \
+              --jq '[.isCrossRepository, .state, .headRefName, ([.labels[].name] | index("hold") != null)] | @tsv')
+            if [ "$cross" = "true" ]; then
+              reason="PR #$NUM comes from a fork. Only same-repository branches are handled."
+            elif [ "$state" != "OPEN" ]; then
+              reason="PR #$NUM is $state; nothing to do."
+            elif [ "$head" = "main" ]; then
+              reason="PR #$NUM has main as its head branch, and nothing here pushes to main."
+            elif [ "$held" = "true" ]; then
+              reason="PR #$NUM has the hold label. Remove it to let Claude work on it."
+            else
+              ref="$head"
+            fi
+          fi
+          if [ -n "$reason" ]; then
+            echo "::notice::Claude did not run: $reason"
+            printf '## Claude did not run\n\n%s\n' "$reason" >> "$GITHUB_STEP_SUMMARY"
+            gh issue comment "$NUM" --repo "$GH_REPO" --body "Claude did not run: $reason" \
+              || echo "::warning::could not post the refusal comment"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Detect Anthropic credential
+        id: auth
+        if: steps.target.outputs.proceed == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Anthropic credential is configured, so the Claude step was skipped."
+            {
+              echo "## Claude is not configured"
+              echo
+              echo "The request passed the gates, but this repository has no"
+              echo "Anthropic credential, so the agent step was skipped."
+              echo
+              echo "To enable it, add one repository secret:"
+              echo "- \`ANTHROPIC_API_KEY\` (API billing), or"
+              echo "- \`CLAUDE_CODE_OAUTH_TOKEN\` (from \`claude setup-token\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Checkout code
+        if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Refuse pushes to main, tags and deletions
+        if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          hooks="$RUNNER_TEMP/git-hooks"
+          mkdir -p "$hooks"
+          cat > "$hooks/pre-push" <<'HOOK'
+          #!/bin/bash
+          # Installed by the workflow. main is live: changes reach it only via a PR.
+          while read -r _local_ref local_sha remote_ref _remote_sha; do
+            if [[ "$local_sha" =~ ^0+$ ]]; then
+              echo "pre-push: deleting $remote_ref is not allowed here." >&2; exit 1
+            fi
+            case "$remote_ref" in
+              refs/heads/main) echo "pre-push: pushing to main is not allowed. Push a branch and open a PR." >&2; exit 1 ;;
+              refs/heads/*) ;;
+              *) echo "pre-push: only branches may be pushed (got $remote_ref)." >&2; exit 1 ;;
+            esac
+          done
+          exit 0
+          HOOK
+          chmod 0755 "$hooks/pre-push"
+          git config --local core.hooksPath "$hooks"
+
+      # Read-only helper for the agent. `gh api` is not allowlisted directly:
+      # a prefix rule would also approve `-X PUT .../merge`. This script fixes
+      # the method and repository and accepts only a fixed kind plus a number.
+      - name: Install read-only review fetcher
+        if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
+        run: |
+          cat > "$RUNNER_TEMP/gh-review-read.sh" <<'SCRIPT'
+          #!/bin/bash
+          # usage: gh-review-read.sh <pr-comments|pr-reviews|issue-comments> <number>
+          set -euo pipefail
+          kind="${1:-}"
+          num="${2:-}"
+          [[ "$num" =~ ^[0-9]+$ ]] || { echo "number must be digits" >&2; exit 2; }
+          case "$kind" in
+            pr-comments) path="pulls/$num/comments" ;;
+            pr-reviews) path="pulls/$num/reviews" ;;
+            issue-comments) path="issues/$num/comments" ;;
+            *) echo "kind must be pr-comments, pr-reviews or issue-comments" >&2; exit 2 ;;
+          esac
+          exec gh api --method GET --paginate "repos/Danathar/appbox/$path"
+          SCRIPT
+          chmod 0755 "$RUNNER_TEMP/gh-review-read.sh"
+
+      # The runner image has no bats; install what the agent is told to run.
+      # Keep the shellcheck pin in step with ci.yml.
+      - name: Install bats and pinned shellcheck
+        if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
+        env:
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
+
+      # anthropics/claude-code-action v1.0.266 (annotated tag dereferenced to
+      # its commit). Input names checked against that release's action.yml.
+      # Tag mode (no `prompt`) answers the @claude comment itself and pushes
+      # through the action's flag-free git-push wrapper.
+      - name: Run Claude Code
+        if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
+        uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
+        env:
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          base_branch: main
+          branch_prefix: claude/
+          additional_permissions: |
+            actions: read
+          claude_args: >-
+            --max-turns 30
+            --append-system-prompt "Read AGENTS.md first, then docs/working-on-the-repo.md. main is live: every enrolled machine fast-forwards to it and runs host/appbox-update from it, so never push to main, never force-push, never rewrite history; work on the branch you are on and offer changes as a pull request with --base main. Every gh command must pass --repo Danathar/appbox. Never run host/appbox-update, host/install, podman, docker, distrobox or systemctl: test shell changes only with bats tests/unit (it stubs those commands) and shellcheck. Never bake Claude Desktop or any proprietary app into the image; init hooks install only, never upgrade, and always exit 0. Never weaken the cosign signature check in host/appbox-update or the key fingerprint pins in scripts/appbox.sh. If you change a Tier 2 path (host/, hosts/, distrobox.ini, ContainerFiles/, scripts/appbox.sh, scripts/claude-desktop-sync, packages/, keys/, cosign.pub, .github/workflows/build-appbox.yml, .claude/settings.json, .claude/hooks/), say in the PR body what it does to machines: changed host/*.service or *.timer files need systemctl --user daemon-reload on each machine, and an image change must merge and build green before an ini change that depends on it. Judge review findings by docs/review-rubric.md: verify each claim against the code and say so when one is wrong. No em dashes in anything you write. Do not merge pull requests. Pushes and PRs made with the workflow token do not start CI: whenever you push or open a PR, say in your final comment that a maintainer must re-run the checks (close and reopen the PR, or push a commit) before the required checks can pass."
+            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(gh pr create --repo Danathar/appbox --base main:*),Bash(gh pr view --repo Danathar/appbox:*),Bash(gh pr diff --repo Danathar/appbox:*),Bash(gh pr comment --repo Danathar/appbox:*),Bash(gh issue view --repo Danathar/appbox:*),Bash(gh issue comment --repo Danathar/appbox:*),Bash(${{ runner.temp }}/gh-review-read.sh:*),Bash(bats tests/unit:*),Bash(shellcheck:*),Bash(bash -n:*),Bash(node --test scripts/tests/),Bash(node --test .claude/hooks/tests/)"

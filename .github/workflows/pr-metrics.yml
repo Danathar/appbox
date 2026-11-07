@@ -1,0 +1,75 @@
+# PR acceptance metrics.
+#
+# Once a week (and on demand from the Actions tab) runs scripts/pr-metrics.mjs,
+# which reads this repository's pull requests through the GitHub API with the
+# workflow token and reports, per author class (agent, human, dependency bot):
+# PRs opened, merged and closed unmerged, acceptance rate, time to merge, who
+# merged them, and the share of merged PRs that needed a follow-up fix.
+#
+# Read-only on purpose: the result goes to the run's step summary and to a
+# `pr-metrics` artifact (markdown + JSON). Nothing is committed to `main`
+# (machines run `main`, so a reporting job has no business pushing there), and
+# no issue or comment is created. Dated snapshots under docs/metrics/ are made
+# by hand with the command in docs/metrics/README.md. Definitions:
+# docs/metrics.md. Needs no secret: the built-in token can read PRs.
+
+name: PR metrics
+
+on:
+  schedule:
+    - cron: '23 6 * * 1' # Mondays 06:23 UTC
+  workflow_dispatch:
+    inputs:
+      window_days:
+        description: 'Length of the recent window, in days'
+        required: false
+        default: '30'
+
+permissions: {}
+
+concurrency:
+  group: pr-metrics
+  cancel-in-progress: false
+
+jobs:
+  metrics:
+    # A scheduled run on a fork would only describe the fork.
+    if: github.repository == 'Danathar/appbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Compute metrics
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WINDOW_DAYS: ${{ inputs.window_days || '30' }}
+        run: |
+          set -euo pipefail
+          case "$WINDOW_DAYS" in
+            ''|*[!0-9]*) echo "::error::window_days must be a whole number, got '$WINDOW_DAYS'"; exit 1 ;;
+          esac
+          node scripts/pr-metrics.mjs --repo "$REPO" --window-days "$WINDOW_DAYS" \
+            --json-out pr-metrics.json > pr-metrics.md
+          cat pr-metrics.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload metrics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-metrics
+          path: |
+            pr-metrics.md
+            pr-metrics.json
+          retention-days: 90
