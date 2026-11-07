@@ -27,11 +27,15 @@
 #   - On an issue the action creates a `claude/issue-<n>-...` branch; on a PR
 #     it works on the PR's head branch.
 #   - A pre-push hook, installed outside the workspace (`core.hooksPath` under
-#     $RUNNER_TEMP, where the agent's edit permission does not reach), refuses
-#     any push to `main`, any tag and any branch deletion. The action's own
-#     push wrapper forbids flags, so `--no-verify` cannot skip the hook.
-#   - The branch ruleset on `main` (required checks, no direct pushes) is the
-#     real control; the hook and the tool allowlist are speed bumps on top.
+#     $RUNNER_TEMP), refuses any push to `main`, any tag and any branch
+#     deletion. The agent's file edits are limited to the workspace (tag mode
+#     runs with acceptEdits, and Edit/Write are deliberately not in the
+#     allowlist, since listing them would allow writes anywhere on the
+#     runner), so it cannot rewrite the hook. The action's push wrapper
+#     forbids flags, so `--no-verify` cannot skip it either. It could still
+#     edit `.git/config` inside the workspace and drop `core.hooksPath`.
+#   - So the branch ruleset on `main` (required checks, no direct pushes) is
+#     the real control; the hook and the tool allowlist are speed bumps.
 #   Tier 2 paths (see docs/risk-tiers.md) therefore change only through a PR.
 #   The agent is told to state the machine impact of such a change in the PR.
 #
@@ -251,4 +255,4 @@ jobs:
           claude_args: >-
             --max-turns 30
             --append-system-prompt "Read AGENTS.md first, then docs/working-on-the-repo.md. main is live: every enrolled machine fast-forwards to it and runs host/appbox-update from it, so never push to main, never force-push, never rewrite history; work on the branch you are on and offer changes as a pull request with --base main. Every gh command must pass --repo Danathar/appbox. Never run host/appbox-update, host/install, podman, docker, distrobox or systemctl: test shell changes only with bats tests/unit (it stubs those commands) and shellcheck. Never bake Claude Desktop or any proprietary app into the image; init hooks install only, never upgrade, and always exit 0. Never weaken the cosign signature check in host/appbox-update or the key fingerprint pins in scripts/appbox.sh. If you change a Tier 2 path (host/, hosts/, distrobox.ini, ContainerFiles/, scripts/appbox.sh, scripts/claude-desktop-sync, packages/, keys/, cosign.pub, .github/workflows/build-appbox.yml, .claude/settings.json, .claude/hooks/), say in the PR body what it does to machines: changed host/*.service or *.timer files need systemctl --user daemon-reload on each machine, and an image change must merge and build green before an ini change that depends on it. Judge review findings by docs/review-rubric.md: verify each claim against the code and say so when one is wrong. No em dashes in anything you write. Do not merge pull requests. Pushes and PRs made with the workflow token do not start CI: whenever you push or open a PR, say in your final comment that a maintainer must re-run the checks (close and reopen the PR, or push a commit) before the required checks can pass."
-            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(gh pr create --repo Danathar/appbox --base main:*),Bash(gh pr view --repo Danathar/appbox:*),Bash(gh pr diff --repo Danathar/appbox:*),Bash(gh pr comment --repo Danathar/appbox:*),Bash(gh issue view --repo Danathar/appbox:*),Bash(gh issue comment --repo Danathar/appbox:*),Bash(${{ runner.temp }}/gh-review-read.sh:*),Bash(bats tests/unit:*),Bash(shellcheck:*),Bash(bash -n:*),Bash(node --test scripts/tests/),Bash(node --test .claude/hooks/tests/)"
+            --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(gh pr create --repo Danathar/appbox --base main:*),Bash(gh pr view --repo Danathar/appbox:*),Bash(gh pr diff --repo Danathar/appbox:*),Bash(gh pr comment --repo Danathar/appbox:*),Bash(gh issue view --repo Danathar/appbox:*),Bash(gh issue comment --repo Danathar/appbox:*),Bash(${{ runner.temp }}/gh-review-read.sh:*),Bash(bats tests/unit:*),Bash(shellcheck:*),Bash(bash -n:*),Bash(node --test scripts/tests/),Bash(node --test .claude/hooks/tests/)"

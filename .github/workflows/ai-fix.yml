@@ -34,7 +34,8 @@
 # Kept off `main` the same way as claude.yml: a pre-push hook outside the
 # workspace refuses pushes to `main`, tags and deletions; the only push the
 # agent may run is exactly `git push -u origin HEAD`; and the branch ruleset
-# on `main` is the real control. Tier 2 paths (docs/risk-tiers.md) change
+# on `main` is the real control (see claude.yml for what the hook can and
+# cannot stop). Tier 2 paths (docs/risk-tiers.md) change
 # only through the PR, whose body must state the change's machine impact.
 #
 # The allowlist is a speed bump, not a sandbox (see claude.yml for why). No
@@ -267,7 +268,11 @@ jobs:
       # anthropics/claude-code-action v1.0.266 (annotated tag dereferenced to
       # its commit). Input names checked against that release's action.yml.
       # A `prompt` runs the action in agent mode, so no @claude mention is
-      # needed, and only the tools listed in --allowedTools are available.
+      # needed. Agent mode sets no permission mode itself, so acceptEdits is
+      # passed here: it allows file edits inside the workspace and denies them
+      # elsewhere (the pre-push hook under RUNNER_TEMP included). Edit and
+      # Write are left off --allowedTools on purpose, because listing them
+      # would allow writes anywhere on the runner.
       - name: Apply verified fixes
         if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
         uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
@@ -292,8 +297,9 @@ jobs:
             6. Finish with one comment (`gh issue comment --repo Danathar/appbox` or `gh pr comment --repo Danathar/appbox`) listing what you applied and what you rejected, with the reason for each. Pushes and PRs made with the workflow token do not start CI, so if you pushed or opened a PR, end the comment by telling the maintainer to re-run the checks (close and reopen the PR, or push a commit) before the required checks can pass.
           claude_args: >-
             --max-turns 40
+            --permission-mode acceptEdits
             --append-system-prompt "Work only on Danathar/appbox and pass --repo Danathar/appbox to every gh command. Never push to main; push only with git push -u origin HEAD from the branch you were given. Never run host/appbox-update, host/install, podman, docker, distrobox or systemctl. Never weaken signature or key fingerprint checks. See AGENTS.md."
-            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push -u origin HEAD),Bash(gh pr create --repo Danathar/appbox --base main:*),Bash(gh pr view --repo Danathar/appbox:*),Bash(gh pr diff --repo Danathar/appbox:*),Bash(gh pr comment --repo Danathar/appbox:*),Bash(gh issue view --repo Danathar/appbox:*),Bash(gh issue comment --repo Danathar/appbox:*),Bash(${{ runner.temp }}/gh-review-read.sh:*),Bash(bats tests/unit:*),Bash(shellcheck:*),Bash(bash -n:*),Bash(node --test scripts/tests/),Bash(node --test .claude/hooks/tests/)"
+            --allowedTools "Read,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push -u origin HEAD),Bash(gh pr create --repo Danathar/appbox --base main:*),Bash(gh pr view --repo Danathar/appbox:*),Bash(gh pr diff --repo Danathar/appbox:*),Bash(gh pr comment --repo Danathar/appbox:*),Bash(gh issue view --repo Danathar/appbox:*),Bash(gh issue comment --repo Danathar/appbox:*),Bash(${{ runner.temp }}/gh-review-read.sh:*),Bash(bats tests/unit:*),Bash(shellcheck:*),Bash(bash -n:*),Bash(node --test scripts/tests/),Bash(node --test .claude/hooks/tests/)"
 
       - name: Clear the request label
         if: always() && steps.auth.outputs.configured == 'true' && (github.event_name == 'issues' || github.event_name == 'pull_request')
