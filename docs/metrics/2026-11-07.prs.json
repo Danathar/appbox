@@ -1,0 +1,293 @@
+[
+  {
+    "number": 62,
+    "title": "Update dependency ubuntu to v26",
+    "body": "",
+    "state": "OPEN",
+    "createdAt": "2026-11-07T16:27:34Z",
+    "mergedAt": null,
+    "closedAt": null,
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 61,
+    "title": "Update dependency sigstore/cosign to v3",
+    "body": "",
+    "state": "OPEN",
+    "createdAt": "2026-11-07T16:27:28Z",
+    "mergedAt": null,
+    "closedAt": null,
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 60,
+    "title": "docs: contributing guide, PR and issue templates, path labeler",
+    "body": "This adds the files a contributor (person or AI agent) meets first: a contributing guide, a pull request template, issue forms, and a workflow that labels pull requests by the area they touch. Everything is written for appbox as it is: `main` is live, so the guide and template put what a merge deploys to machines, and what each change must say about that, up front. Nothing here runs on an enrolled machine or goes into the image.\n\n## What\n\n- **CONTRIBUTING.md:** the short version of `docs/working-on-the-repo.md` (linked, not duplicated): what each kind of change deploys and when, the image-before-ini and daemon-reload rules, ground rules (no proprietary app baked in, open apps never touched, never rewrite `main`, no em dashes), the local checks (shellcheck via podman, `bats tests/unit`, `node --test scripts/tests .claude/hooks/tests`, the `tests/e2e/` image build), DCO sign-off, the risk tiers (no human-merge gate on any tier; Tier 2 needs reviewer-agent review, tests, and a stated machine impact; the owner's brake is the `hold` label), and private security reporting.\n- **PR template:** tier and paths touched, machine impact, checks run, safety checklist, sign-off.\n- **Issue forms:** the bug form asks for the machine, GPU vendor, the box's image (`podman inspect apps --format '{{.ImageName}}'`), `--show-config` output, the `appbox-update` journal, and the app. The feature form covers adding an app (licence and vendor apt repo) or a behaviour change. `config.yml` turns blank issues off (the API, which automation uses, bypasses forms anyway) and links private security reporting.\n- **Labeler:** `.github/labeler.yml` maps paths to `area/image`, `area/host`, `area/ci`, `area/agents`, `docs`, `tests`. The workflow runs on `pull_request_target` with `permissions: {}` at the top and only `contents: read` + `pull-requests: write` on the job, never checks out PR code, and pins `actions/labeler` v7.0.0 by commit SHA.\n\n## Files\n\n`CONTRIBUTING.md`, `.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/{bug_report,feature_request,config}.yml`, `.github/labeler.yml`, `.github/workflows/labeler.yml`\n\n## Tests\n\n- `actionlint .github/workflows/labeler.yml`: clean.\n- `yq -e .` on all five YAML files: parses.\n- `grep -rn` for em dashes over every file: none.\n- Checked that `node --test scripts/tests .claude/hooks/tests` (the command the guide gives) runs tests from both directories on Node 26.\n- Confirmed `bf12e9b0` is the commit the `v7.0.0` tag points at, and that labeler v7 reads its config through the API at the base commit when no checkout exists.\n\n## Notes\n\n- Under `pull_request_target` the workflow and config come from `main`, so this PR will not label itself; labelling starts with the next PR after merge.\n- The `area/*`, `docs` and `tests` labels and `hold` do not exist yet. Labeler creates a missing label on first use (default colour, no description), so creating them first is nicer, not required.\n- Private vulnerability reporting is currently **disabled** on the repo, so the security links will not work until it is turned on.\n- `docs/risk-tiers.md`, `AGENTS.md`, `tests/unit`, `tests/e2e/` and `.github/workflows/ci.yml` are referenced but come from other ACMM PRs.\n\nFixes #18\nFixes #19\nFixes #20\nFixes #39\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_0113KwWU4TkJ8wfy3XjusyGo\n",
+    "state": "OPEN",
+    "createdAt": "2026-11-07T16:27:15Z",
+    "mergedAt": null,
+    "closedAt": null,
+    "author": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 15,
+    "title": "Update docker/metadata-action action to v6.2.0",
+    "body": "",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T15:43:12Z",
+    "mergedAt": "2026-11-07T15:54:49Z",
+    "closedAt": "2026-11-07T15:54:49Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": []
+  },
+  {
+    "number": 14,
+    "title": "Update docker/login-action action to v4.8.0",
+    "body": "",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T15:43:07Z",
+    "mergedAt": "2026-11-07T15:54:35Z",
+    "closedAt": "2026-11-07T15:54:35Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": []
+  },
+  {
+    "number": 13,
+    "title": "Move redhat-actions buildah-build and push-to-registry to v3",
+    "body": "Replaces #9 and #10, which only moved the deprecated v2 tag.\n\n- `redhat-actions/buildah-build` v2 -> v3.1.0 (`719e3c4`)\n- `redhat-actions/push-to-registry` v2 -> v3.0.0 (`94ade33`)\n\nBoth SHAs match their upstream `v3.x` release tags.\n\nWhy:\n- v2 targets Node 20, which GitHub is retiring, and is now deprecated upstream. v3 runs on Node 24.\n- buildah-build v3.1.0 auto-detects rootless native overlayfs and stops forcing fuse-overlayfs, which upstream says fixes silent data corruption and slowdowns on ubuntu-24.04 runners (the runner this workflow uses).\n- The other v3 changes are new optional inputs; the inputs this workflow passes are unchanged.\n\nTesting: this PR's CI exercises the build step. The push and sign steps only run on `main`, so `push-to-registry` v3 is first exercised by the post-merge build. If that fails, revert this PR; machines keep the last good image in the meantime.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T15:42:48Z",
+    "mergedAt": "2026-11-07T15:46:45Z",
+    "closedAt": "2026-11-07T15:46:45Z",
+    "author": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": []
+  },
+  {
+    "number": 12,
+    "title": "Update sigstore/cosign-installer action to v4.1.3",
+    "body": "",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T14:16:48Z",
+    "mergedAt": "2026-11-07T15:54:07Z",
+    "closedAt": "2026-11-07T15:54:07Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": []
+  },
+  {
+    "number": 11,
+    "title": "Update dependency sigstore/cosign to v2.6.5",
+    "body": "",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T14:16:44Z",
+    "mergedAt": "2026-11-07T15:54:21Z",
+    "closedAt": "2026-11-07T15:54:21Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": []
+  },
+  {
+    "number": 10,
+    "title": "Update redhat-actions/push-to-registry digest to 5860fc9",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T13:37:55Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T14:16:19Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 9,
+    "title": "Update redhat-actions/buildah-build digest to 9dc2ade",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T13:37:50Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T14:16:15Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 7,
+    "title": "Update docker/login-action digest to c94ce9f - autoclosed",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T12:42:31Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T12:54:39Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 6,
+    "title": "Bump docker/login-action from 4.2.0 to 4.7.0",
+    "body": "",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T12:42:30Z",
+    "mergedAt": "2026-11-07T14:16:12Z",
+    "closedAt": "2026-11-07T14:16:12Z",
+    "author": {
+      "login": "dependabot",
+      "isBot": true
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": [
+      "dependencies",
+      "github_actions"
+    ]
+  },
+  {
+    "number": 5,
+    "title": "Bump github/codeql-action/upload-sarif from 4.32.6 to 4.39.3",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T12:42:28Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T12:55:59Z",
+    "author": {
+      "login": "dependabot",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": [
+      "dependencies",
+      "github_actions"
+    ]
+  },
+  {
+    "number": 4,
+    "title": "Update actions/checkout digest to fbc6f39 - autoclosed",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T12:42:27Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T12:54:36Z",
+    "author": {
+      "login": "renovate",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": []
+  },
+  {
+    "number": 3,
+    "title": "Bump ASzc/change-string-case-action from 6 to 8",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T12:42:22Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T12:55:56Z",
+    "author": {
+      "login": "dependabot",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": [
+      "dependencies",
+      "github_actions"
+    ]
+  },
+  {
+    "number": 2,
+    "title": "Bump actions/checkout from 6.0.2 to 7.0.1",
+    "body": "",
+    "state": "MERGED",
+    "createdAt": "2026-11-07T12:42:20Z",
+    "mergedAt": "2026-11-07T14:16:06Z",
+    "closedAt": "2026-11-07T14:16:06Z",
+    "author": {
+      "login": "dependabot",
+      "isBot": true
+    },
+    "mergedBy": {
+      "login": "Danathar",
+      "isBot": false
+    },
+    "labels": [
+      "dependencies",
+      "github_actions"
+    ]
+  },
+  {
+    "number": 1,
+    "title": "Bump actions/upload-artifact from 7.0.0 to 7.0.2",
+    "body": "",
+    "state": "CLOSED",
+    "createdAt": "2026-11-07T12:42:17Z",
+    "mergedAt": null,
+    "closedAt": "2026-11-07T12:56:00Z",
+    "author": {
+      "login": "dependabot",
+      "isBot": true
+    },
+    "mergedBy": null,
+    "labels": [
+      "dependencies",
+      "github_actions"
+    ]
+  }
+]
