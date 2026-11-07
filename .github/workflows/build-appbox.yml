@@ -115,7 +115,7 @@ jobs:
       - name: Sign container image
         if: github.event_name != 'pull_request'
         run: |
-          cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.containerfile }}@${DIGEST}
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.containerfile }}@"${DIGEST}"
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           COSIGN_EXPERIMENTAL: false
@@ -126,7 +126,7 @@ jobs:
       - name: Verify signature
         if: github.event_name != 'pull_request'
         run: |
-          cosign verify --key cosign.pub ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.containerfile }}@${DIGEST} > /dev/null
+          cosign verify --key cosign.pub ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.containerfile }}@"${DIGEST}" > /dev/null
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
 
