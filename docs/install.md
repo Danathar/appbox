@@ -15,10 +15,16 @@ Before starting, read:
 
 ## Ground rules
 
-- Start Claude Code for this work as `APPBOX_OWNER_SESSION=1 claude` from the
-  checkout. The repo's guard hook refuses the machine-setup commands below
-  (creating the box, `host/install`, running the update script) in any other
-  session; see "The Bash guard" in [`AGENTS.md`](../AGENTS.md).
+- Run this from a Claude Code session started in the checkout as
+  `APPBOX_OWNER_SESSION=1 claude` (the commands are at the top of
+  [`new-machine-prompt.md`](new-machine-prompt.md)). Check before starting:
+  `echo "${APPBOX_OWNER_SESSION:-}"` must print `1`. If it doesn't, stop and
+  ask the owner to restart the session that way. The repo's guard hook
+  refuses the machine-setup commands below (creating the box, `host/install`,
+  running the update script) in any other session; see "The Bash guard" in
+  [`AGENTS.md`](../AGENTS.md).
+- `main` only takes pull requests, the owner's included. Never push to it;
+  every repo change goes through a pull request (step 8 has the commands).
 
 - Ask the owner before anything destructive: removing or replacing boxes,
   deleting data or launchers, changing other timers or services.
@@ -87,10 +93,12 @@ Follow [`working-on-the-repo.md`](working-on-the-repo.md). In short:
   and AMD). If this machine needs NVIDIA (`nvidia=true`) or different apps,
   give it its own `hosts/<hostname>.ini` and set `APPBOX_INI` in
   `hosts/<hostname>.env`.
-- Push image changes first, wait for CI (`gh run watch`), and check the
-  signature
+- Each change is a pull request (commands in step 8). Merge image changes
+  first, wait for the build on `main` to go green
+  (`gh run list -R Danathar/appbox --workflow build-appbox --branch main --limit 1`),
+  and check the signature
   (`cosign verify --key cosign.pub ghcr.io/danathar/appbox:latest`) before
-  pushing ini changes that depend on them.
+  merging ini changes that depend on them.
 
 ## 4. Clone and create the box
 
@@ -99,7 +107,7 @@ git clone https://github.com/Danathar/appbox ~/claude/appbox   # default path
 distrobox assemble create --file ~/claude/appbox/distrobox.ini  # or this machine's ini
 ```
 
-The repo is public, so cloning needs no login. Pushing does (`gh auth login`).
+The repo is public, so cloning needs no login. Opening pull requests does (`gh auth login`).
 A different checkout path works; `host/install` (step 7) handles it.
 
 **Do not launch any app from the new box yet.** Launching Signal before its
@@ -183,7 +191,32 @@ and which notification goes with it.
   facts, what was there before, what was done, current configuration,
   leftovers kept on purpose, and anything new learned.
 - Add the machine to the "Machines so far" line in `README.md`.
-- Commit and push (see `working-on-the-repo.md`).
+- Open a pull request with these files. `main` takes no direct pushes. Write
+  the description from `.github/pull_request_template.md` (Tier 2, because it
+  touches `hosts/`; the machine impact; the checks you ran) into a file, and
+  pass that file, because `--fill` would skip the template:
+
+  ```sh
+  cd ~/claude/appbox
+  git switch main && git pull --ff-only
+  git switch -c hosts/<hostname>
+  git add hosts/<hostname>.env hosts/<hostname>.md README.md
+  git commit -s -m "Record <hostname>"
+  git push -u origin hosts/<hostname>
+  gh pr create -R Danathar/appbox --title "Record <hostname>" --body-file <description file>
+  gh pr checks -R Danathar/appbox --watch    # about 10 minutes, mostly the image build test
+  ```
+
+  If a check fails, fix it on the branch and push again. When the checks are
+  green, **don't merge it yourself** (`AGENTS.md`: agents never merge their
+  own pull requests). Give the owner the link; the owner, or Hive's
+  serialized merge lane, merges it. Once it has merged, put the checkout back
+  on `main`, because the timer's self-update follows whatever branch is
+  checked out:
+
+  ```sh
+  git switch main && git pull --ff-only
+  ```
 
 ## Report
 

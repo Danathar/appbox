@@ -1,5 +1,21 @@
 # appbox
 
+[![CI](https://github.com/Danathar/appbox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Danathar/appbox/actions/workflows/ci.yml)
+[![Build image](https://github.com/Danathar/appbox/actions/workflows/build-appbox.yml/badge.svg?branch=main)](https://github.com/Danathar/appbox/actions/workflows/build-appbox.yml)
+[![Coverage gate](https://github.com/Danathar/appbox/actions/workflows/coverage-gate.yml/badge.svg?branch=main)](https://github.com/Danathar/appbox/actions/workflows/coverage-gate.yml)
+[![Nightly compliance](https://github.com/Danathar/appbox/actions/workflows/nightly-compliance.yml/badge.svg?branch=main)](https://github.com/Danathar/appbox/actions/workflows/nightly-compliance.yml)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-1f6feb)](https://deepwiki.com/Danathar/appbox)
+[![Maintenance assisted by Hivecommons Hive](https://img.shields.io/badge/maintenance%20assisted%20by-Hivecommons%20Hive-1f6feb)](https://github.com/hivecommons/hive)
+[![ACMM L6 Fully Autonomous](https://img.shields.io/badge/ACMM-L6%20Fully%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
+[![AI assisted](https://img.shields.io/badge/AI-assisted-d29922)](#about-this-project)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+> [!NOTE]
+> This was created with AI assistance and should be treated cautiously. The
+> update timer deletes and recreates a distrobox and runs whatever is on `main`
+> as your user, so read `host/appbox-update` before you install it. See
+> [About this project](#about-this-project).
+
 A CI-built [distrobox](https://distrobox.it/) image for running desktop apps
 (currently Signal Desktop and Claude Desktop) on an atomic Fedora host, without
 hand-maintaining a pet container. Built with the
@@ -223,3 +239,61 @@ cosign verify --key cosign.pub ghcr.io/danathar/appbox:latest
 `cosign.pub` is in this repo. The private key is the `SIGNING_SECRET`
 repository secret. CI also verifies its own signature after signing, and
 verifies ublue's signature on the base image before building.
+
+## Feedback and contributing
+
+Bugs and rough edges are welcome: [open an issue](https://github.com/Danathar/appbox/issues).
+To change something yourself, read [CONTRIBUTING.md](CONTRIBUTING.md) first; AI
+agents start at [AGENTS.md](AGENTS.md). Found a security problem? Don't open a
+public issue; report it privately through the repository's Security tab.
+
+## Maintained with Hive (ACMM L6)
+
+Maintenance is assisted by [Hivecommons Hive](https://github.com/hivecommons/hive),
+which runs a fleet of AI agents against this repo at ACMM level 6 (Fully
+Autonomous). The repository is maintained by [@Danathar](https://github.com/Danathar).
+
+**What L6 permits here:** this is a fully autonomous hive. Agents file issues
+and open pull requests, and every agent pull request merges once its required
+checks pass, unless it carries `hold`. Hive merges them one at a time through
+its serialized merge lane. No pull request waits for a person to merge it,
+including Tier 2 changes to what machines run or what the image contains
+(`host/`, `hosts/`, `distrobox.ini`, the image definition and build, the
+signing keys) and to the agent boundary. Those get more scrutiny instead: the
+reviewer agent reviews them, the tests and policy checks guard their
+invariants, and the pull request states what a machine needs to do (such as a
+`daemon-reload`). Because `main` reaches every enrolled machine, those checks
+are the real gate. `main` is protected by a ruleset. The reviewer agent
+comments with file and line references but never approves, merges or closes
+anything. The owner's brakes are the `hold` label and pausing the repo in Hive.
+
+See [`docs/branch-protection.md`](docs/branch-protection.md) for the required
+checks, [`docs/risk-tiers.md`](docs/risk-tiers.md) for which changes get the most
+scrutiny, [`docs/multi-agent.md`](docs/multi-agent.md) for how agents share the
+repo and [`docs/agent-boundaries.md`](docs/agent-boundaries.md) for what agents
+must never do.
+
+Learn more: [Hive](https://github.com/hivecommons/hive) · [Hive Hub](https://hive.kubestellar.io) · [ACMM levels](https://github.com/hivecommons/hive#acmm-levels) · [full ACMM policy matrix](https://github.com/hivecommons/hive/blob/v4/src/docs/acmm-policy-matrix.md)
+
+## About this project
+
+> [!NOTE]
+> This project was developed with AI assistance and should be treated
+> cautiously.
+>
+> It is a personal, third-party setup. It is not affiliated with or endorsed
+> by Signal, Anthropic, Universal Blue, or the distrobox project. Signal
+> Desktop and Claude Desktop come from their vendors' own apt repositories;
+> this repo only packages the box they run in.
+>
+> It comes as-is, with no promise that it is safe for your machines or data.
+> The update timer deletes and recreates the `apps` box, upgrades apps inside
+> it, and runs whatever is on `main` of this repository as your user. Read
+> `host/appbox-update` and the systemd units before you install them. App data
+> lives in your home directory and is not removed by a rebuild, but keep
+> backups. The maintainer is not responsible for data loss, broken boxes, or
+> other consequences of using it.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE).
