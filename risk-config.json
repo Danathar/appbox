@@ -1,0 +1,95 @@
+{
+    "$comment": "docs/risk-tiers.md is the source; this file restates its tier table as data. scripts/check-policies.mjs fails when the two disagree (tier number, name, paths, required commands, scrutiny), and when a floor path leaves the highest tier. Tier 2 is the MOST dangerous tier. A path matching several tiers takes the highest. There is no human merge gate on any tier: agent pull requests auto-merge once the required check `test` passes, and the owner's brakes are the `hold` label and pausing the repository in the hive. Scrutiny says how hard the reviewer agent looks and what the pull request must state, not who merges. A path glob cannot see inside a file, so a reviewer may raise a tier above the path match, never lower it.",
+    "default_tier": 1,
+    "merge": {
+        "human_gate": false,
+        "required_check": "test",
+        "brakes": [
+            "hold label on the pull request",
+            "pause the repository in the hive"
+        ]
+    },
+    "tiers": [
+        {
+            "tier": 0,
+            "name": "docs",
+            "paths": [
+                "docs/**",
+                "*.md",
+                "tests/**",
+                "scripts/tests/**",
+                ".claude/memory/**",
+                ".claude/session-summary.md",
+                ".editorconfig",
+                ".gitignore"
+            ],
+            "required_commands": [],
+            "scrutiny": "standard",
+            "auto_merge": true,
+            "pr_must_state": []
+        },
+        {
+            "tier": 1,
+            "name": "tooling",
+            "paths": [
+                ".github/**",
+                "scripts/*.mjs",
+                "policies/**",
+                "risk-config.json",
+                ".claude/skills/**",
+                ".cursor/**",
+                "renovate.json",
+                ".shellcheckrc",
+                ".coverage-thresholds.json"
+            ],
+            "required_commands": [
+                "node scripts/check-policies.mjs",
+                "node --test scripts/tests/*.test.mjs .claude/hooks/tests/*.test.mjs",
+                "actionlint"
+            ],
+            "scrutiny": "elevated",
+            "auto_merge": true,
+            "pr_must_state": [
+                "which required commands ran and what they printed",
+                "for a workflow: what was verified and what cannot be until it runs (a schedule, a secret)",
+                "for a policy or risk-config change: whether it loosens a rule"
+            ]
+        },
+        {
+            "tier": 2,
+            "name": "live",
+            "paths": [
+                "host/**",
+                "hosts/**",
+                "distrobox.ini",
+                "ContainerFiles/**",
+                "scripts/appbox.sh",
+                "scripts/claude-desktop-sync",
+                "packages/**",
+                "keys/**",
+                "cosign.pub",
+                ".github/workflows/build-appbox.yml",
+                ".claude/settings.json",
+                ".claude/hooks/**",
+                ".github/CODEOWNERS",
+                ".github/rulesets/**",
+                "LICENSE"
+            ],
+            "required_commands": [
+                "shellcheck host/appbox-update host/install scripts/appbox.sh scripts/claude-desktop-sync",
+                "bats tests/unit",
+                "node scripts/check-policies.mjs",
+                "node --test scripts/tests/*.test.mjs .claude/hooks/tests/*.test.mjs"
+            ],
+            "scrutiny": "highest",
+            "auto_merge": true,
+            "pr_must_state": [
+                "machine impact: what reaches enrolled machines, and when (next timer run, next recreate)",
+                "whether unit files changed, so each machine needs systemctl --user daemon-reload",
+                "for an ini change that depends on the image: that the image change is already on main with a green build",
+                "that no proprietary app is baked into the image",
+                "how it was tested without touching a real apps box"
+            ]
+        }
+    ]
+}

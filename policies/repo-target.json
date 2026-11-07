@@ -1,0 +1,33 @@
+{
+    "$comment": "Keeps gh write commands on Danathar/appbox. Evaluated by scripts/check-policies.mjs; explained in policies/README.md. The -R requirement applies to the governance docs listed in requireFlagGlobs; the ban on naming another repository applies to every scanned file.",
+    "repo": "Danathar/appbox",
+    "scanGlobs": [
+        "*.md",
+        "docs/**/*.md",
+        ".github/**/*.md",
+        ".github/workflows/*.yml",
+        ".github/workflows/*.yaml",
+        ".claude/**/*.md",
+        ".cursor/**",
+        "policies/**/*.md"
+    ],
+    "excludeGlobs": [],
+    "requireFlagGlobs": [
+        "docs/ai-ops-runbook.md",
+        "docs/multi-agent.md",
+        "docs/quality.md",
+        "docs/review-rubric.md",
+        "docs/risk-tiers.md",
+        "docs/strategy.md",
+        "docs/security/SECURITY-AI.md",
+        "docs/reflections/**",
+        "policies/README.md"
+    ],
+    "writeCommandPattern": "\\bgh\\s+(?:(?:pr|issue|release|workflow|label|secret|variable)\\s+(?:create|comment|edit|close|reopen|merge|review|delete|run|enable|disable|ready|upload|delete-asset|lock|unlock|transfer|pin|unpin|update-branch|revert|clone|develop|set)|run\\s+(?:rerun|cancel|delete))\\b",
+    "repoFlagPattern": "(?:--repo|-R)[ =][\"']?Danathar/appbox(?![\\w.-])",
+    "forbiddenPatterns": [
+        "\\bgh\\s+(?:(?:pr|issue|release|workflow|label|secret|variable)\\s+(?:create|comment|edit|close|reopen|merge|review|delete|run|enable|disable|ready|upload|delete-asset|lock|unlock|transfer|pin|unpin|update-branch|revert|clone|develop|set)|run\\s+(?:rerun|cancel|delete))\\b[^\\n]*?(?:--repo|-R)[ =][\"']?(?!Danathar/appbox(?![\\w.-]))[\\w.-]+/[\\w.-]+",
+        "GH_REPO[=:]\\s*[\"']?(?!Danathar/appbox(?![\\w.-]))[\\w.-]+/[\\w.-]+",
+        "gh\\s+repo\\s+set-default\\s+(?!Danathar/appbox(?![\\w.-]))[\\w.-]+/[\\w.-]+"
+    ]
+}
