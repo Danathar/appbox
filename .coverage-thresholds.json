@@ -1,0 +1,16 @@
+{
+  "$comment": "Line-coverage floors for the host scripts under the bats unit tests (tests/unit), measured with kcov in a Fedora container by .github/workflows/coverage-gate.yml and enforced by scripts/coverage-gate.mjs. kcov measures only lines for Bash. The tests run each script from a scratch copy of the repo at one fixed path (APPBOX_TEST_REPO), so 'file' is matched as a path suffix in kcov's per-file list. These floors are provisional: they were set before kcov had ever run on this repo (it cannot run on the machine the tests were written on), deliberately low. Raise each floor to a few points below the number the first CI run reports, and add a 'measured' entry with that number. Floors only go up; a human edits this file.",
+  "tool": "kcov",
+  "areas": {
+    "host/appbox-update": {
+      "summary": "coverage/bats/coverage.json",
+      "file": "host/appbox-update",
+      "floor": { "lines": 50 }
+    },
+    "host/install": {
+      "summary": "coverage/bats/coverage.json",
+      "file": "host/install",
+      "floor": { "lines": 50 }
+    }
+  }
+}

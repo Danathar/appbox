@@ -1,0 +1,203 @@
+name: CI
+
+# Lint, unit, node, end-to-end and workflow checks for every pull request and
+# every push to main. No path filters, so the checks always report. The last
+# job, `test`, needs all the others and is the single required status check
+# for main: add a new CI job to its `needs:` list, not to the ruleset.
+#
+# The image itself is built, signed and pushed by build-appbox.yml. The
+# `E2E (image build)` job here builds it again only to test it, and never
+# pushes it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+env:
+  # Pinned so lint results match between CI and a local run of the same
+  # version. Checksums are from the upstream release pages.
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
+jobs:
+  lint:
+    name: Lint (shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned shellcheck
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}" >> "$GITHUB_PATH"
+
+      - name: shellcheck (host scripts, image scripts, tests)
+        # Settings come from .shellcheckrc. The stubs written by
+        # tests/unit/helpers.bash are heredocs, so they are exercised by the
+        # unit tests rather than linted here.
+        run: |
+          shellcheck --version
+          git ls-files -z host/appbox-update host/install scripts/appbox.sh scripts/claude-desktop-sync \
+            'tests/*.sh' 'tests/*.bash' 'tests/*.bats' | xargs -0 shellcheck
+
+  unit:
+    name: Unit tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The runner's own bash and coreutils.
+          - name: ubuntu bash
+            container: ''
+          # A newer bash, coreutils and bats: Fedora tracks upstream closely,
+          # and is the distribution the enrolled machines run.
+          - name: fedora container
+            container: registry.fedoraproject.org/fedora:latest
+    # An empty string runs the job directly on the runner.
+    container: ${{ matrix.container }}
+    steps:
+      - name: Install bats (ubuntu)
+        if: matrix.container == ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
+
+      - name: Install bats (fedora)
+        if: matrix.container != ''
+        run: dnf install -y -q bats gawk git
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run bats unit tests
+        run: |
+          bash --version | head -n 1
+          bats --version
+          bats --tap tests/unit
+
+  node:
+    name: Node tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: node --test (scripts/tests, .claude/hooks/tests)
+        # Either directory may be missing or empty; that is not a failure.
+        run: |
+          node --version
+          mapfile -t files < <(find scripts/tests .claude/hooks/tests -name '*.test.mjs' -type f 2> /dev/null | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No *.test.mjs files in scripts/tests or .claude/hooks/tests; nothing to run."
+            exit 0
+          fi
+          printf 'Running %s\n' "${files[@]}"
+          node --test "${files[@]}"
+
+  e2e:
+    name: E2E (image build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: host/appbox-update --show-config on the runner
+        # Read-only: self-update is off and --show-config never touches a box.
+        run: bash tests/e2e/show-config.sh
+
+      - name: Build the image and check its contents
+        # Skips the ublue base image signature check, which build-appbox.yml
+        # does before every published build; this image is never pushed.
+        run: |
+          podman --version
+          bash tests/e2e/run.sh
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned actionlint and shellcheck
+        # actionlint runs shellcheck over every `run:` script it finds on
+        # PATH, so pin that too, to the same version as the lint job.
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/bin" actionlint
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: actionlint (.github/workflows)
+        run: |
+          actionlint -version
+          actionlint -color
+
+  test:
+    # The one required check. It fails unless every job above succeeded, so
+    # a skipped, cancelled or failed job can never count as a pass.
+    name: test
+    if: always()
+    needs: [lint, unit, node, e2e, actionlint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: All CI jobs succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success")' > /dev/null
