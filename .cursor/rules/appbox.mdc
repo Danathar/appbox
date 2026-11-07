@@ -1,0 +1,14 @@
+---
+description: Rules for appbox, a CI-built distrobox image plus the host timer that keeps each machine's apps box current
+alwaysApply: true
+---
+
+Full rules are in `AGENTS.md`; read it first. Top rules:
+
+- `main` is live: every enrolled machine fast-forwards to it and runs `host/appbox-update` from it. Never force-push, rewrite or push directly to `main`.
+- Never bake a proprietary app (Claude Desktop) into the public image. Install it at box start from an install-only init hook that always exits 0, like `scripts/claude-desktop-sync`.
+- An open app is never touched. Upgrades happen only in `host/appbox-update`, only for closed apps in `guarded_apps`.
+- Never run `host/appbox-update` (except `--show-config`) or `host/install` on a real machine. Test with `bats tests/unit` and `tests/e2e/`. Never write `func && ...` or `if func` for a function that must abort under errexit.
+- Every PR states its machine impact: image change green before a dependent ini change; unit file changes need `systemctl --user daemon-reload` on each machine.
+
+Also: `git commit -s`, `-R Danathar/appbox` on every `gh` command, run `shellcheck` and `bats tests/unit` before finishing, never read secrets, no rpm-ostree layering, no em dashes. Tier 2 paths (`host/`, `hosts/`, `distrobox.ini`, image files, build workflow) get the most scrutiny but no human-merge gate (`docs/risk-tiers.md`).
