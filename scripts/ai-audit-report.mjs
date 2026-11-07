@@ -26,7 +26,8 @@
  *   signature       a pull request opened by the Hive App without its hive
  *                   signature line.
  *   required-check  a check that main's ruleset requires was missing or not
- *                   green on the pull request's head commit when it merged.
+ *                   green on the pull request's head commit when it merged,
+ *                   judged from the results that existed at the merge time.
  *                   The required checks are read from the live ruleset
  *                   (GET /repos/{repo}/rules/branches/main). A check counts
  *                   only for pull requests merged after the ruleset that
@@ -126,32 +127,34 @@ export function labelAtMerge(events, mergedAt, label = HOLD_LABEL) {
 }
 
 /**
- * Required checks that were not green on the head commit.
+ * Required checks that were not green on the head commit at the moment the
+ * pull request merged. Only results that existed then count: a check run
+ * completed after the merge, or a status posted after it, is ignored, so a
+ * rerun after the merge can neither hide a violation nor invent one.
  * @param {{context: string, since: string}[]} required
  * @param {string} mergedAt
- * @param {object[]} checkRuns GET /commits/{sha}/check-runs (latest per name)
- * @param {object[]} statuses GET /commits/{sha}/status `.statuses` (latest per context)
+ * @param {object[]} checkRuns GET /commits/{sha}/check-runs?filter=all (every attempt)
+ * @param {object[]} statuses GET /commits/{sha}/statuses (every status posted)
  * @returns {{context: string, state: string}[]}
  */
 export function requiredCheckGaps(required, mergedAt, checkRuns, statuses) {
     const gaps = [];
     const at = Date.parse(mergedAt);
+    const newestBefore = (items, stamp) =>
+        items
+            .filter((x) => x[stamp] && Date.parse(x[stamp]) <= at)
+            .sort((a, b) => Date.parse(b[stamp]) - Date.parse(a[stamp]) || Number(b.id) - Number(a.id))[0];
     for (const req of required) {
         if (Date.parse(req.since) > at) continue;
-        const runs = checkRuns
-            .filter((r) => r.name === req.context)
-            .sort((a, b) => Number(b.id) - Number(a.id));
-        const status = statuses.find((s) => s.context === req.context);
-        if (runs.length === 0 && !status) {
-            gaps.push({ context: req.context, state: 'missing' });
+        const run = newestBefore(checkRuns.filter((r) => r.name === req.context), 'completed_at');
+        const status = newestBefore(statuses.filter((x) => x.context === req.context), 'created_at');
+        if (!run && !status) {
+            gaps.push({ context: req.context, state: 'missing (no result before the merge)' });
             continue;
         }
-        const runOk = runs.length > 0 && PASSING_CONCLUSIONS.has(runs[0].conclusion);
+        const runOk = run !== undefined && PASSING_CONCLUSIONS.has(run.conclusion);
         const statusOk = status?.state === 'success';
-        if (!runOk && !statusOk) {
-            const state = runs.length > 0 ? runs[0].conclusion ?? runs[0].status : status.state;
-            gaps.push({ context: req.context, state: String(state) });
-        }
+        if (!runOk && !statusOk) gaps.push({ context: req.context, state: String(run ? run.conclusion : status.state) });
     }
     return gaps;
 }
@@ -237,8 +240,8 @@ export function collect(gh, repo, since) {
         details[pr.number] = {
             commits: paged(gh, `repos/${repo}/pulls/${pr.number}/commits`, (x) => x, COMMIT_CAP),
             events: paged(gh, `repos/${repo}/issues/${pr.number}/events`, (x) => x),
-            checkRuns: paged(gh, `repos/${repo}/commits/${sha}/check-runs`, (x) => x.check_runs),
-            statuses: gh(['api', `repos/${repo}/commits/${sha}/status?per_page=100`]).statuses ?? [],
+            checkRuns: paged(gh, `repos/${repo}/commits/${sha}/check-runs?filter=all`, (x) => x.check_runs),
+            statuses: paged(gh, `repos/${repo}/commits/${sha}/statuses`, (x) => x),
         };
     }
     return { prs, required, details };

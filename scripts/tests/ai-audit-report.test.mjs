@@ -48,7 +48,7 @@ function details(overrides = {}) {
     return {
         commits: [commit('1111111aaaa', SIGNED)],
         events: [],
-        checkRuns: [{ id: 10, name: 'test', status: 'completed', conclusion: 'success' }],
+        checkRuns: [{ id: 10, name: 'test', status: 'completed', conclusion: 'success', completed_at: '2026-11-20T09:30:00Z' }],
         statuses: [],
         ...overrides,
     };
@@ -99,25 +99,43 @@ test('unsigned commits are findings, merge commits are skipped', () => {
     assert.match(f[0].detail, /2222222, 4444444/);
 });
 
-test('required check missing, failing, or green on the head commit', () => {
+const BEFORE = '2026-11-20T09:30:00Z';
+const AFTER = '2026-11-20T11:00:00Z';
+const run = (id, conclusion, completed_at = BEFORE) => ({ id, name: 'test', status: 'completed', conclusion, completed_at });
+
+test('required check missing, failing, or green on the head commit at merge time', () => {
     const at = '2026-11-20T10:00:00Z';
-    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [], []), [{ context: 'test', state: 'missing' }]);
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [], []), [{ context: 'test', state: 'missing (no result before the merge)' }]);
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [run(1, 'failure')], []), [{ context: 'test', state: 'failure' }]);
+    // Still running at merge: no completed result existed.
     assert.deepEqual(
-        requiredCheckGaps(REQUIRED, at, [{ id: 1, name: 'test', status: 'completed', conclusion: 'failure' }], []),
-        [{ context: 'test', state: 'failure' }]
+        requiredCheckGaps(REQUIRED, at, [{ id: 1, name: 'test', status: 'in_progress', conclusion: null, completed_at: null }], []),
+        [{ context: 'test', state: 'missing (no result before the merge)' }]
     );
-    assert.deepEqual(
-        requiredCheckGaps(REQUIRED, at, [{ id: 1, name: 'test', status: 'in_progress', conclusion: null }], []),
-        [{ context: 'test', state: 'in_progress' }]
-    );
-    // The newest run of a name decides: a re-run that passed clears an old failure.
-    const rerun = [
-        { id: 1, name: 'test', conclusion: 'failure' },
-        { id: 2, name: 'test', conclusion: 'success' },
+    // The newest result before the merge decides: a passing re-run clears an older failure.
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [run(1, 'failure', '2026-11-20T09:00:00Z'), run(2, 'success')], []), []);
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [], [{ context: 'test', state: 'success', created_at: BEFORE }]), []);
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [run(1, 'skipped')], []), []);
+});
+
+test('results that arrived after the merge neither hide nor invent a violation', () => {
+    const at = '2026-11-20T10:00:00Z';
+    // Failed at merge, passed on a re-run afterwards: still a finding.
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [run(1, 'failure'), run(2, 'success', AFTER)], []), [
+        { context: 'test', state: 'failure' },
+    ]);
+    // Green at merge, failed on a re-run afterwards: not a finding.
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [run(1, 'success'), run(2, 'failure', AFTER)], []), []);
+    // Only a post-merge result: missing at merge time.
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [run(1, 'success', AFTER)], []), [
+        { context: 'test', state: 'missing (no result before the merge)' },
+    ]);
+    // Commit statuses follow the same rule.
+    const statuses = [
+        { context: 'test', state: 'failure', created_at: BEFORE },
+        { context: 'test', state: 'success', created_at: AFTER },
     ];
-    assert.deepEqual(requiredCheckGaps(REQUIRED, at, rerun, []), []);
-    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [], [{ context: 'test', state: 'success' }]), []);
-    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [{ id: 1, name: 'test', conclusion: 'skipped' }], []), []);
+    assert.deepEqual(requiredCheckGaps(REQUIRED, at, [], statuses), [{ context: 'test', state: 'failure' }]);
 });
 
 test('a pull request merged before the ruleset required the check is not held to it', () => {
@@ -182,8 +200,8 @@ function fakeGh({ prs, rules = [], rulesets = {}, perPr = {} }) {
         if (m) return perPr[m[1]].events;
         m = /\/commits\/([0-9a-f]+)\/check-runs$/.exec(path);
         if (m) return { check_runs: Object.values(perPr).find((d) => d.sha === m[1]).checkRuns };
-        m = /\/commits\/([0-9a-f]+)\/status$/.exec(path);
-        if (m) return { statuses: [] };
+        m = /\/commits\/([0-9a-f]+)\/statuses$/.exec(path);
+        if (m) return [];
         throw new Error(`unexpected gh call: ${args.join(' ')}`);
     };
     return { gh, calls };
@@ -203,6 +221,9 @@ test('collect only fetches details for agent pull requests', () => {
     assert.deepEqual(Object.keys(data.details), ['7']);
     assert.deepEqual(data.required, [{ context: 'test', since: '2026-11-10T00:00:00Z' }]);
     assert.ok(!calls.some((c) => c.includes('/pulls/8/')));
+    // Every check-run attempt and every status, so results can be judged at merge time.
+    assert.ok(calls.some((c) => c.includes(`/commits/${HEAD}/check-runs?filter=all&`)));
+    assert.ok(calls.some((c) => c.includes(`/commits/${HEAD}/statuses?`)));
 });
 
 test('main exits 0 with no findings, 1 with findings, 2 on bad input', () => {
@@ -222,7 +243,7 @@ test('main exits 0 with no findings, 1 with findings, 2 on bad input', () => {
         prs: [pr()],
         rules: testRules,
         rulesets: { 9: '2026-11-10T00:00:00Z' },
-        perPr: { 7: { sha: HEAD, ...details({ checkRuns: [{ id: 1, name: 'test', conclusion: 'failure' }] }) } },
+        perPr: { 7: { sha: HEAD, ...details({ checkRuns: [{ id: 1, name: 'test', conclusion: 'failure', completed_at: '2026-11-20T09:30:00Z' }] }) } },
     });
     assert.equal(main(['--repo', REPO, '--since', '2026-11-01'], { gh: red.gh, ...io }), 1);
     assert.match(out.join(''), /required-check: required check `test` was failure/);
