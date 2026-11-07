@@ -1,0 +1,113 @@
+{
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "permissions": {
+        "allow": [
+            "Bash(bats:*)",
+            "Bash(shellcheck:*)",
+            "Bash(actionlint:*)",
+            "Bash(bash -n:*)",
+            "Bash(node --test scripts/tests .claude/hooks/tests)",
+            "Bash(node --test scripts/tests/)",
+            "Bash(node --test .claude/hooks/tests/)",
+            "Bash(host/appbox-update --show-config)",
+            "Bash(git status:*)",
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "Bash(git show:*)",
+            "Bash(git branch:*)"
+        ],
+        "ask": [
+            "Bash(git push:*)",
+            "Edit(host/**)",
+            "Write(host/**)",
+            "Edit(hosts/**)",
+            "Write(hosts/**)",
+            "Edit(distrobox.ini)",
+            "Write(distrobox.ini)",
+            "Edit(ContainerFiles/**)",
+            "Write(ContainerFiles/**)",
+            "Edit(scripts/appbox.sh)",
+            "Write(scripts/appbox.sh)",
+            "Edit(scripts/claude-desktop-sync)",
+            "Write(scripts/claude-desktop-sync)",
+            "Edit(packages/**)",
+            "Write(packages/**)",
+            "Edit(.github/workflows/build-appbox.yml)",
+            "Write(.github/workflows/build-appbox.yml)",
+            "Edit(.claude/settings.json)",
+            "Write(.claude/settings.json)",
+            "Edit(.claude/hooks/**)",
+            "Write(.claude/hooks/**)"
+        ],
+        "deny": [
+            "Read(./.env)",
+            "Read(./.env.*)",
+            "Read(**/.env)",
+            "Read(**/.env.*)",
+            "Read(**/*.key)",
+            "Read(**/cosign.key)",
+            "Read(**/*.pem)",
+            "Read(~/.ssh/**)",
+            "Read(~/.config/appbox-signing/**)",
+            "Read(~/.config/gh/**)",
+            "Read(~/.docker/config.json)",
+            "Bash(git push --force:*)",
+            "Bash(git push -f:*)",
+            "Bash(git push --force-with-lease:*)",
+            "Bash(git push --mirror:*)",
+            "Bash(git push origin main:*)",
+            "Bash(git push origin HEAD:main:*)",
+            "Bash(git push -u origin main:*)",
+            "Bash(git reset --hard:*)",
+            "Bash(git filter-branch:*)",
+            "Bash(distrobox rm:*)",
+            "Bash(distrobox-rm:*)",
+            "Bash(distrobox stop:*)",
+            "Bash(distrobox upgrade:*)",
+            "Bash(distrobox assemble create --replace:*)",
+            "Bash(distrobox assemble rm:*)",
+            "Bash(podman rm apps)",
+            "Bash(podman rm -f apps)",
+            "Bash(podman rm --force apps)",
+            "Bash(podman stop apps)",
+            "Bash(podman kill apps)",
+            "Bash(podman rmi ghcr.io/danathar/appbox:*)",
+            "Bash(podman system prune:*)",
+            "Bash(podman image prune:*)",
+            "Bash(systemctl --user start appbox-update:*)",
+            "Bash(systemctl --user stop appbox-update:*)",
+            "Bash(systemctl --user restart appbox-update:*)",
+            "Bash(systemctl --user enable appbox-update:*)",
+            "Bash(systemctl --user enable --now appbox-update:*)",
+            "Bash(systemctl --user disable appbox-update:*)",
+            "Bash(systemctl --user daemon-reload)",
+            "Bash(host/appbox-update)",
+            "Bash(host/appbox-update --force:*)",
+            "Bash(./host/appbox-update)",
+            "Bash(./host/appbox-update --force:*)",
+            "Bash(bash host/appbox-update:*)",
+            "Bash(sh host/appbox-update:*)",
+            "Bash(host/install:*)",
+            "Bash(./host/install:*)",
+            "Bash(bash host/install:*)",
+            "Bash(sh host/install:*)",
+            "Bash(sudo:*)",
+            "Bash(rpm-ostree install:*)",
+            "Bash(rpm-ostree override:*)"
+        ]
+    },
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-bash.mjs\"",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ]
+    }
+}
