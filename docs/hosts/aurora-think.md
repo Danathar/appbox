@@ -110,6 +110,10 @@ These shaped the design and are worth knowing on the next host.
 - `distrobox assemble --replace` deletes the box before creating it, so a
   pull that fails afterwards would leave no box. The update script pulls and
   verifies first, then creates from the pinned digest with `pull=false`.
+- After a recreate from the systemd service, the box ends up stopped
+  (`Exited (143)`): systemd cleans up the unit's processes when the oneshot
+  finishes. This is harmless. The next launcher click starts it again in
+  about a second.
 - Ubuntu 26.04's coreutils is a single multicall binary that resolves its
   own path, so a renamed copy of `sleep` cannot fake a process name in tests.
   Use `prctl(PR_SET_NAME)` instead.
