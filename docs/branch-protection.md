@@ -8,7 +8,7 @@ enforcing it. Every command targets `Danathar/appbox`.
 ## Status
 
 The ruleset in [`.github/rulesets/main.json`](../.github/rulesets/main.json) is
-**active**. It was applied on 2026-11-07 as ruleset `RULESET_ID`. Check it
+**active**. It was applied on 2026-11-07 as ruleset `26764620`. Check it
 yourself; neither call needs admin rights:
 
 ```bash
@@ -24,7 +24,7 @@ Being active does not prove the rules are the ones in the file. Compare the
 live ruleset with the file (prints nothing when they match):
 
 ```bash
-diff <(gh api repos/Danathar/appbox/rulesets/RULESET_ID \
+diff <(gh api repos/Danathar/appbox/rulesets/26764620 \
          --jq '{name,target,enforcement,conditions,bypass_actors,rules}' | jq -S .) \
      <(jq -S '{name,target,enforcement,conditions,bypass_actors,rules}' \
          .github/rulesets/main.json)
@@ -106,7 +106,7 @@ To change it, edit the file in a pull request, then after it merges update the
 live ruleset from the file:
 
 ```bash
-gh api --method PUT repos/Danathar/appbox/rulesets/RULESET_ID --input .github/rulesets/main.json
+gh api --method PUT repos/Danathar/appbox/rulesets/26764620 --input .github/rulesets/main.json
 ```
 
 ### Renaming a required check
