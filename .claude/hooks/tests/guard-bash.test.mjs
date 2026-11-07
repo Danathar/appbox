@@ -10,12 +10,28 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { checkCommand, isSecretPath, machineScript } from '../guard-bash.mjs';
+import { checkCommand, isSecretPath, machineScript, OWNER_ENV } from '../guard-bash.mjs';
 
 const HOOK = fileURLToPath(new URL('../guard-bash.mjs', import.meta.url));
 
-function runHook(input) {
-    return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', timeout: 20000 });
+// The owner switch is read from this process's environment. These tests may
+// themselves run inside an owner session, so start from a clean environment
+// and turn the switch on only where a test says so.
+delete process.env[OWNER_ENV];
+const BASE_ENV = { ...process.env };
+
+function runHook(input, extraEnv = {}) {
+    return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', timeout: 20000, env: { ...BASE_ENV, ...extraEnv } });
+}
+
+/** Run fn with the owner switch on in this process, then turn it off again. */
+function asOwner(fn) {
+    process.env[OWNER_ENV] = '1';
+    try {
+        return fn();
+    } finally {
+        delete process.env[OWNER_ENV];
+    }
 }
 
 // Commands an agent runs in ordinary work on this repository. None may be refused.
@@ -379,4 +395,97 @@ test('a long command line is decided within the time budget', () => {
     const started = Date.now();
     assert.equal(checkCommand(command), null);
     assert.ok(Date.now() - started < 5000);
+});
+
+// --- The owner switch (APPBOX_OWNER_SESSION=1 in Claude Code's own environment) ---
+
+// The machine-setup commands docs/install.md runs in an owner session.
+const ownerAllowed = [
+    'distrobox assemble create --file ~/claude/appbox/distrobox.ini',
+    'distrobox assemble create --replace --file distrobox.ini',
+    'distrobox assemble rm --file distrobox.ini',
+    'distrobox stop ubuntu-signal',
+    '~/claude/appbox/host/install',
+    'host/install',
+    '~/claude/appbox/host/appbox-update --force',
+    'APPBOX_SELF_UPDATE=0 APPBOX_INI=/tmp/t.ini host/appbox-update --force',
+    'systemd-run --user --wait --collect ~/claude/appbox/host/appbox-update --force',
+    'systemctl --user start appbox-update',
+    'systemctl --user enable --now appbox-update.timer',
+    'systemctl --user daemon-reload',
+];
+
+// Still refused in an owner session.
+const ownerStillBlocked = [
+    ['cat cosign.key', /secret/],
+    ['cat ~/.ssh/id_ed25519', /secret/],
+    ['git push --force origin fix/x', /force/],
+    ['git push origin main', /main directly/],
+    ['git reset --hard origin/main', /reset --hard/],
+    ['git filter-branch --tree-filter x HEAD', /rewrites history/],
+    ['podman system prune -a', /prune/],
+    ['podman image prune -a', /prune/],
+    ['podman rm -f apps', /apps/],
+    ['podman rmi ghcr.io/danathar/appbox:latest', /appbox image/],
+    ['distrobox rm --force ubuntu-signal', /distrobox rm/],
+    ['distrobox upgrade --all', /distrobox upgrade/],
+    ['pkill signal-desktop', /open app/],
+    ['rm -rf ~/.config/Signal', /Signal or Claude data/],
+    ['rpm-ostree install htop', /layers packages/],
+    ['sudo ls', /privilege/],
+    ['distrobox enter apps -- sudo apt-get install -y claude-desktop', /privilege/],
+    ['source host/appbox-update', /sourcing/],
+    ['scripts/appbox.sh', /image build/],
+    ['scripts/claude-desktop-sync', /init hook/],
+];
+
+for (const command of ownerAllowed) {
+    test(`owner session allows: ${command}`, () => {
+        const r = asOwner(() => checkCommand(command));
+        assert.equal(r, null, `expected allow in an owner session, got: ${r?.reason}`);
+    });
+    test(`without the owner switch, blocks: ${command}`, () => {
+        const r = checkCommand(command);
+        assert.ok(r?.blocked, 'expected a block outside an owner session');
+        assert.match(r.reason, /APPBOX_OWNER_SESSION=1 claude/);
+    });
+}
+
+for (const [command, why] of ownerStillBlocked) {
+    test(`owner session still blocks: ${command}`, () => {
+        const r = asOwner(() => checkCommand(command));
+        assert.ok(r?.blocked, 'expected a block even in an owner session');
+        assert.match(r.reason, why);
+    });
+}
+
+// An agent cannot turn the switch on from inside a command.
+const selfGranted = [
+    'APPBOX_OWNER_SESSION=1 host/install',
+    'export APPBOX_OWNER_SESSION=1; host/install',
+    'export APPBOX_OWNER_SESSION=1 && host/appbox-update --force',
+    'env APPBOX_OWNER_SESSION=1 host/appbox-update',
+    "APPBOX_OWNER_SESSION=1 bash -c 'distrobox assemble create --file distrobox.ini'",
+    'APPBOX_OWNER_SESSION=1 systemctl --user daemon-reload',
+    'declare -x APPBOX_OWNER_SESSION=1; systemctl --user start appbox-update',
+];
+for (const command of selfGranted) {
+    test(`setting the switch inside the command does nothing: ${command}`, () => {
+        assert.ok(checkCommand(command)?.blocked);
+    });
+}
+
+test('hook protocol: the switch comes from the hook process environment', () => {
+    const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: '~/claude/appbox/host/install' } });
+    assert.equal(runHook(input).status, 2);
+    assert.equal(runHook(input, { [OWNER_ENV]: '1' }).status, 0);
+    assert.equal(runHook(input, { [OWNER_ENV]: 'yes' }).status, 2, 'only the value 1 turns it on');
+    const inline = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'APPBOX_OWNER_SESSION=1 host/install' } });
+    assert.equal(runHook(inline).status, 2);
+});
+
+test('hook protocol: an owner session still cannot read secrets', () => {
+    const r = runHook(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cat cosign.key' } }), { [OWNER_ENV]: '1' });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /secret/);
 });

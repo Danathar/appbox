@@ -26,7 +26,8 @@ Critical rules:
   yourself that Signal and Claude are not running. Test with the throwaway
   ini method in `docs/working-on-the-repo.md`. As an agent, do not run it at
   all (only `--show-config`): use `bats tests/unit` and `tests/e2e/`, and leave
-  real-machine tests to the owner. The guard hook enforces this.
+  real-machine tests to the owner. The guard hook enforces this, except in a
+  machine-setup session the owner started as `APPBOX_OWNER_SESSION=1 claude`.
 - Ask before anything destructive on a host. Don't layer packages with
   rpm-ostree.
 - Per-machine settings go in `hosts/<hostname>.env`, per-machine records in

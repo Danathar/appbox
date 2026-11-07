@@ -78,7 +78,9 @@ that would break a real machine.
   changes nothing. The throwaway-ini method in
   [docs/working-on-the-repo.md](docs/working-on-the-repo.md) is for the owner
   to run by hand, after checking for themself that Signal and Claude are
-  closed; see "The Bash guard" below for why agents may not run it.
+  closed; see "The Bash guard" below for why agents may not run it. A
+  session the owner starts for machine setup (`APPBOX_OWNER_SESSION=1 claude`,
+  see "The owner switch" below) may run what `docs/install.md` runs.
 - **Never call a function that must abort on failure as `func && ...` or
   `if func`.** Bash turns `errexit` off inside it, so a failed pull or
   signature check would carry on. `rebuild_box` reports a skipped rebuild
@@ -183,13 +185,15 @@ script.
 
 ## The Bash guard
 
-`.claude/settings.json` denies the most dangerous commands by prefix and
-registers `.claude/hooks/guard-bash.mjs` on every Bash call. The hook reads
+`.claude/settings.json` denies secret reads, force pushes, pushes to `main`,
+history rewrites, prunes, `sudo` and `rpm-ostree` layering by prefix (a deny
+there cannot be overridden by anything), and registers `.claude/hooks/guard-bash.mjs` on every Bash call. The hook reads
 the command the way the shell would (through `env`, `timeout`, `bash -c`,
 absolute paths, wrappers and nesting) and refuses:
 
 - running `host/appbox-update` (except `--show-config`), `host/install`,
-  `scripts/appbox.sh` or `scripts/claude-desktop-sync`;
+  `scripts/appbox.sh` or `scripts/claude-desktop-sync` (the first two are
+  allowed in an owner session, below);
 - `distrobox rm`, `stop`, `upgrade`, `assemble rm`, and `assemble create`
   without `--dry-run` (the repo's ini sets `replace=true`, so it deletes the
   existing box first); removing, stopping or killing the `apps` box or a
@@ -210,6 +214,23 @@ the ini can be written in the same command and can name `[apps]` and the
 real image. Even a run that stops at the failed pull first inspects the real
 box and can write notification state under `~/.local/state/appbox`. So the
 hook refuses every real run, and the owner runs that test by hand.
+
+**The owner switch.** Setting up a machine (`docs/new-machine-prompt.md`,
+which follows `docs/install.md`) needs commands the hook otherwise refuses:
+`distrobox assemble create`, `distrobox stop <old-box>`, `host/install`,
+`host/appbox-update --force` (also through
+`systemd-run --user --wait --collect`), and `systemctl --user` for the appbox
+units, including `daemon-reload`. When the owner starts Claude Code as
+`APPBOX_OWNER_SESSION=1 claude`, the hook (which inherits Claude Code's
+environment, not the command's) allows exactly those. Nothing an agent types
+can turn it on: `APPBOX_OWNER_SESSION=1 host/install` or an `export` inside a
+Bash call sets the variable for that command only, and the hook ignores it.
+The switch never relaxes secret reads, force pushes, pushes to `main` or
+history rewrites, prunes and `--all` removals, removal of the `apps` box or
+its image, `distrobox rm` or `upgrade`, `pkill` of the apps, deleting app data,
+`sudo`, `rpm-ostree` layering, or apt and dpkg changes. Hive agents and
+everyday sessions never run with it, and no agent sets it in a settings file's
+`env` (`.claude/settings.local.json` edits ask first for that reason).
 
 The hook catches mistakes by an agent that is following these rules. It is
 not a sandbox against an agent trying to get around it. Do not file, or fix

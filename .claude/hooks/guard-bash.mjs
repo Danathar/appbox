@@ -40,6 +40,17 @@
 //     (box-start init hook, which installs a package).
 //   - `bash -n FILE` (syntax check), shellcheck, cat, grep and other readers of
 //     those files are fine.
+//   Owner switch: when Claude Code itself was started with
+//   APPBOX_OWNER_SESSION=1 in its environment (`APPBOX_OWNER_SESSION=1 claude`,
+//   the owner setting up or testing a machine per docs/install.md), the hook's
+//   own process sees it and allows running host/appbox-update and host/install
+//   (directly or through systemd-run), `distrobox assemble create|rm`,
+//   `distrobox stop`, and `systemctl --user` changes to appbox units including
+//   daemon-reload. Setting the variable inside a command (inline or export)
+//   does nothing. Never relaxed by it: secret reads, force pushes and pushes to
+//   main, history rewrites, prunes and --all removals, the `apps` box and image
+//   removals, distrobox rm/upgrade, pkill of the apps, deleting app data,
+//   sudo, rpm-ostree layering and apt/dpkg changes.
 //   Boxes, containers and images
 //   - distrobox rm|stop|upgrade, and their distrobox-rm/-stop/-upgrade forms, for
 //     any box. `distrobox assemble rm`, and `distrobox assemble create` unless
@@ -129,6 +140,20 @@ const GUIDANCE =
 
 const block = (reason) => ({ blocked: true, reason: `${reason}\n${GUIDANCE}` });
 
+// The owner switch. The owner sets up and tests machines with Claude Code
+// (docs/new-machine-prompt.md, docs/install.md), which needs a few of the
+// commands refused below. A session the owner starts as
+// `APPBOX_OWNER_SESSION=1 claude` passes that variable to this hook's own
+// process, because hooks inherit Claude Code's environment. A Bash call cannot
+// set it here: an inline `APPBOX_OWNER_SESSION=1 cmd` or an `export` only
+// reaches the command, never this process, and the hook never reads the
+// command's assignments for it. Read on every call so tests can toggle it.
+export const OWNER_ENV = 'APPBOX_OWNER_SESSION';
+const ownerSession = () => process.env[OWNER_ENV] === '1';
+const OWNER_HINT =
+    ` In a session the owner started as \`${OWNER_ENV}=1 claude\` (machine setup, docs/install.md) this is allowed; ` +
+    'an agent cannot turn that on.';
+
 // ---------------------------------------------------------------------------
 // The repository's machine scripts
 // ---------------------------------------------------------------------------
@@ -183,7 +208,9 @@ const SCRIPT_WHY = {
 /** The refusal for running a machine script with `scriptArgs`, or null for the allowed `--show-config`. */
 function checkScriptRun(kind, scriptArgs, what, sourced = false) {
     if (kind === 'updater' && !sourced && scriptArgs[0] === '--show-config') return null;
-    return block(`Blocked: ${what}. ${SCRIPT_WHY[kind]}`);
+    const ownerMay = (kind === 'updater' || kind === 'installer') && !sourced;
+    if (ownerMay && ownerSession()) return null;
+    return block(`Blocked: ${what}. ${SCRIPT_WHY[kind]}${ownerMay ? OWNER_HINT : ''}`);
 }
 
 /** The first machine script a list of words names (and its index), as a shell would open it. */
@@ -535,18 +562,20 @@ function checkDistrobox(cmd, args, state) {
         sub = cmd.slice('distrobox-'.length);
         rest = args;
     }
+    // install.md step 5 stops the old box (never removes it) before copying app data.
+    if (sub === 'stop' && ownerSession()) return null;
     if (sub === 'rm' || sub === 'stop' || sub === 'upgrade') {
         const what = { rm: 'deletes the box (and every launcher whose name starts with its name)', stop: 'stops every app running in the box', upgrade: 'upgrades packages inside boxes, including apps that are open' }[sub];
-        return block(`Blocked: \`distrobox ${sub}\` ${what}. Boxes on this machine are the user's; ask the owner.`);
+        return block(`Blocked: \`distrobox ${sub}\` ${what}. Boxes on this machine are the user's; ask the owner.${sub === 'stop' ? OWNER_HINT : ''}`);
     }
     if (sub === 'assemble') {
         const action = rest.find((a) => !a.startsWith('-'));
         const dry = rest.some((a) => a === '--dry-run' || /^-[a-zA-Z]*d[a-zA-Z]*$/.test(a));
-        if (action === 'rm' || (action === 'create' && !dry)) {
+        if ((action === 'rm' || (action === 'create' && !dry)) && !ownerSession()) {
             return block(
                 `Blocked: \`distrobox assemble ${action}\` deletes or recreates boxes: distrobox.ini sets replace=true, so ` +
                     'creating from it removes the existing `apps` box first. Use --dry-run to see what it would do; the ' +
-                    'owner recreates boxes (after checking that Signal and Claude are closed).'
+                    `owner recreates boxes (after checking that Signal and Claude are closed).${OWNER_HINT}`
             );
         }
         return null;
@@ -664,17 +693,18 @@ const SYSTEMCTL_CHANGING = [
 ];
 
 function checkSystemctl(args) {
+    if (ownerSession() && args.includes('--user')) return null;
     const { sub } = firstWord(args, ['-H', '--host', '-M', '--machine', '-p', '--property', '-t', '--type', '-s', '--signal', '-n', '--lines', '-o', '--output', '--state', '--root']);
     if (sub !== undefined && SYSTEMCTL_CHANGING.includes(sub) && args.some((a) => /appbox/i.test(a))) {
         return block(
             `Blocked: \`systemctl ${sub}\` of an appbox unit changes when (or whether) host/appbox-update runs on this ` +
-                'machine, or runs it now. Only the owner does that.'
+                `machine, or runs it now. Only the owner does that.${OWNER_HINT}`
         );
     }
     if ((sub === 'daemon-reload' || sub === 'daemon-reexec') && args.includes('--user')) {
         return block(
             'Blocked: `systemctl --user daemon-reload` loads the unit files the checkout currently holds, including unmerged ' +
-                'edits to host/*.service or host/*.timer. The owner runs it on each machine after a unit change is merged.'
+                `edits to host/*.service or host/*.timer. The owner runs it on each machine after a unit change is merged.${OWNER_HINT}`
         );
     }
     return null;
