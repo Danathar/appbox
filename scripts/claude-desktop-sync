@@ -1,40 +1,32 @@
 #!/bin/sh
-# Install or upgrade Claude Desktop from Anthropic's apt repo.
+# Install Claude Desktop from Anthropic's apt repo if it is missing.
 #
-# Called from distrobox init_hooks on every box start. distrobox-init runs with
-# errexit, so this must always exit 0: a failure here (no network at boot, say)
-# would otherwise stop the box from starting and take Signal down with it.
+# Called from distrobox init_hooks on every box start. It only does work on
+# the first start of a new box, installing synchronously so that
+# `distrobox assemble` can export the launcher right after. It never upgrades:
+# the box usually starts because an app was just launched, and replacing files
+# under a starting app is unsafe. Upgrades are done by the host's daily
+# appbox-update run, only while the app is closed.
 #
-# First start (not installed yet): install synchronously, so that
-# `distrobox assemble` can export the launcher right after.
-# Later starts: upgrade in the background, so the box comes up immediately.
+# distrobox-init runs with errexit, so this must always exit 0: a failure here
+# (no network, say) would otherwise stop the box from starting and take every
+# app in it down too. A failed install is retried on the next box start.
 
 log=/var/log/appbox-claude-sync.log
 
-claude_sync() {
-    apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 \
-        -o DPkg::Lock::Timeout=120 update &&
-        DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 \
-            install -y claude-desktop
-}
-
 if dpkg-query -W -f '${Status}' claude-desktop 2> /dev/null | grep -q 'ok installed'; then
-    (
-        if claude_sync > "${log}" 2>&1; then
-            echo "appbox: claude-desktop is up to date" >> "${log}"
-        else
-            echo "appbox: claude-desktop upgrade failed, keeping installed version" >> "${log}"
-        fi
-    ) &
-    echo "appbox: upgrading claude-desktop in the background (log: ${log})"
+    exit 0
+fi
+
+echo "appbox: installing claude-desktop"
+if apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 \
+    -o DPkg::Lock::Timeout=120 update > "${log}" 2>&1 &&
+    DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 \
+        install -y claude-desktop >> "${log}" 2>&1; then
+    echo "appbox: claude-desktop installed"
 else
-    echo "appbox: installing claude-desktop"
-    if claude_sync > "${log}" 2>&1; then
-        echo "appbox: claude-desktop installed"
-    else
-        cat "${log}" >&2
-        echo "appbox: WARNING: claude-desktop install failed; it will be retried on next box start" >&2
-    fi
+    cat "${log}" >&2
+    echo "appbox: WARNING: claude-desktop install failed; it will be retried on next box start" >&2
 fi
 
 exit 0

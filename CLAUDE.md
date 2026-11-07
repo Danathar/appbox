@@ -16,6 +16,9 @@ Critical rules:
   that depends on it.
 - Never bake Claude Desktop (or any proprietary app) into the image. It is
   public.
+- An open app is never touched: no rebuild, no upgrade. Init hooks install
+  only and never upgrade; upgrades happen in `host/appbox-update`, only for
+  closed apps listed in `guarded_apps`.
 - Never run `host/appbox-update` against the real box without first checking
   yourself that Signal and Claude are not running. Test with the throwaway
   ini method in `docs/working-on-the-repo.md`.

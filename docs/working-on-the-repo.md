@@ -37,10 +37,10 @@ Merging a Dependabot or Renovate PR is a push to `main` too.
 
 ## Testing changes to the update script safely
 
-`host/appbox-update` deletes and recreates the box. Never test it against
-the real `apps` box while Signal or Claude is open, and check that yourself
-(`pgrep -ax 'claude-desktop|signal-desktop'`) rather than taking anyone's
-word for it.
+`host/appbox-update` deletes and recreates the box, and upgrades apps inside
+it. Never test it against the real `apps` box while Signal or Claude is open,
+and check that yourself (`pgrep -ax 'claude-desktop|signal-desktop'`) rather
+than taking anyone's word for it.
 
 - Use a throwaway ini pointing at an image that doesn't exist:
   `printf '[apps]\nimage=ghcr.io/danathar/does-not-exist:latest\n' > /tmp/t.ini`,
@@ -50,10 +50,25 @@ word for it.
 - To fake a running app, name a process with `prctl`, not by renaming a
   binary (Ubuntu 26.04's coreutils refuses to run under another name):
   `podman exec -d apps python3 -c 'import ctypes,time; ctypes.CDLL(None).prctl(15, b"signal-desktop", 0, 0, 0); time.sleep(120)'`.
+- To test in-place upgrades, install an older version of an app in the box
+  while it is closed (both vendor repos keep a few:
+  `distrobox enter apps -- apt-cache madison claude-desktop`), for example
+  `distrobox enter apps -- sudo apt-get install -y --allow-downgrades claude-desktop=<older>`,
+  then run `APPBOX_SELF_UPDATE=0 host/appbox-update`. A box younger than
+  `APPBOX_MAX_AGE_DAYS` cannot be rebuilt by that run, so only the in-place
+  path runs. Add a fake running app (above) to test the "is ready"
+  notification instead. Don't downgrade Signal and then open it: an older
+  Signal can't read a database written by a newer one.
+- To test the 7-day and 14-day nudges on a young box, run a scratch copy of
+  the script with the `age_days=` line replaced by a fixed number, together
+  with the throwaway ini and a fake running app.
 - To test self-update, use a scratch clone with a local bare remote, not a
   rollback of your real checkout. Rolling back also rolls back the script,
   so you end up testing the old version.
 - `--force` skips only the age check. The running-app check always applies.
+- Never call a function that must abort on failure as `func && ...` or
+  `if func`: bash turns off `errexit` inside it. `rebuild_box` reports a skip
+  through a variable for this reason.
 
 ## Editing on an enrolled machine
 
@@ -83,9 +98,13 @@ hand: `git -C ~/claude/appbox fetch && git -C ~/claude/appbox reset --hard origi
   pick it up on their next run.
 - **Bad image:** `git revert` and let CI rebuild. To roll a machine back right
   away, point `image=` at an older dated tag (`ghcr.io/danathar/appbox:YYYYMMDD`)
-  in that machine's ini and run
-  `systemctl --user start appbox-update` after quitting the apps (or
-  `host/appbox-update --force`).
+  in that machine's ini, quit the apps, and run `host/appbox-update --force`.
+- **Bad app version:** an older image doesn't pin Signal or Claude, because
+  the daily run upgrades them in place from the vendor repos. To hold one
+  back on a machine, downgrade it and hold it in the box
+  (`sudo apt-get install --allow-downgrades <pkg>=<version>`, then
+  `sudo apt-mark hold <pkg>`). The hold lasts until the next rebuild. Signal
+  can't be downgraded below the version that last wrote its database.
 - **Machine broken right now:** `distrobox assemble create --replace --file ~/claude/appbox/distrobox.ini`
   rebuilds the box directly. App data in `~/.config` is not touched.
 
@@ -94,6 +113,10 @@ hand: `git -C ~/claude/appbox fetch && git -C ~/claude/appbox reset --hard origi
 - Never bake proprietary apps (Claude Desktop) into the image. The image is
   public. Add the vendor repo and install at box start from an init hook,
   like `scripts/claude-desktop-sync`.
+- Init hooks install only, never upgrade. A box usually starts because an
+  app was just clicked, so an upgrade there replaces files under a starting
+  app. Upgrades belong to `host/appbox-update`, which checks first that the
+  app is closed. Apps it should protect and upgrade go in `guarded_apps`.
 - Init hooks must always exit 0. `distrobox-init` runs with `errexit`, so a
   failing hook keeps the box (and every app in it) from starting.
 - Vendor keys go through `fetch_key` with a pinned fingerprint. Follow the

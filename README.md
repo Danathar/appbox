@@ -28,16 +28,20 @@ which already carries the distrobox host-integration pieces.
 
 | App | Where | Why |
 | --- | --- | --- |
-| Signal Desktop | Baked into the image | AGPL-3.0, fine to redistribute. Launches immediately after a recreate. |
-| Claude Desktop | Installed by `init_hooks` on every box start | Proprietary. The public image only carries Anthropic's apt key and source, never the package. |
+| Signal Desktop | Baked into the image | AGPL-3.0, fine to redistribute. Launches immediately after a rebuild. |
+| Claude Desktop | Installed by `init_hooks` on the first start of a new box | Proprietary. The public image only carries Anthropic's apt key and source, never the package. |
 
 The image does pre-install Claude Desktop's dependencies (all from the Ubuntu
 archive, including the qemu/OVMF/virtiofsd stack Cowork uses), so the
-box-start install only downloads the app itself. On the first start of a new
-box it installs synchronously so the launcher can be exported. On later starts
-it upgrades in the background and logs to `/var/log/appbox-claude-sync.log`
-inside the box. The hook always exits 0, because a failing init hook would
-stop the box (and Signal) from starting, for example when booting offline.
+box-start install only downloads the app itself (about 25 seconds). It runs
+synchronously so the launcher can be exported, and logs to
+`/var/log/appbox-claude-sync.log` inside the box. On every later start the
+hook sees Claude is installed and exits immediately: it never upgrades,
+because a box usually starts because an app was just clicked, and replacing
+files under a starting app is unsafe. Upgrades come from the host timer
+instead (see [How updates reach you](#how-updates-reach-you)). The hook always
+exits 0, because a failing init hook would stop the box (and Signal) from
+starting, for example when booting offline.
 
 Signal's official apt repo is **amd64 only**, so this image is built for
 amd64 only. Claude Desktop's repo also has arm64, but Signal would need a
@@ -80,38 +84,67 @@ machine will use. It is safe to re-run. The service runs from
 `~/claude/appbox` by default; if the checkout lives elsewhere, `host/install`
 adds a systemd drop-in pointing at it.
 
+## How updates reach you
+
+**The rule: an app that is open is never touched.** Not rebuilt, not
+upgraded. Updates wait until you quit it (tray > Quit; closing the window
+leaves it running in the tray, which counts as open). Signal and Claude are
+the "guarded apps", listed in `guarded_apps` at the top of
+`host/appbox-update`.
+
 The timer fires daily at 04:30 (after Aurora's own 04:00 `uupd` run). On a
 laptop that is asleep at that hour, it fires as soon as the lid opens. Each run
 of `host/appbox-update`:
 
-1. Fast-forwards the repo checkout (`git pull --ff-only`) and, if that
-   brought in changes, re-runs the new version of itself. See
+1. **Self-updates:** fast-forwards the repo checkout and, if that brought in
+   changes, re-runs the new version of itself. See
    [Managing machines centrally](#managing-machines-centrally).
-2. Does nothing unless the box is at least 7 days old (so recreates are
-   weekly, and a skipped day is retried the next day).
-3. Skips if Signal or Claude Desktop is running in the box, so an open
-   session is never killed. If the box reaches twice its maximum age (14
-   days by default) because the apps never quit (an always-on desktop), it
-   sends a desktop notification asking you to quit them and run the update.
-4. Waits up to 2 minutes for the network (it is often still coming up right
-   after resume). If the network or pull fails, the service retries every
-   2 minutes, up to 5 times an hour, like `uupd`.
-5. Pulls and verifies the image signature, then recreates the box from that
-   exact verified digest with `pull=false`. Nothing touches the network after
-   the old box is deleted except the Claude Desktop install, and if that
-   fails, the script retries it and re-exports the launcher.
-6. Shows a notification while the box is rebuilt (about a minute; launchers
-   do not work during that window) and when it is done, then deletes the
-   previous image. The box is left stopped afterwards; the next launch starts
-   it in about a second.
+2. **Weekly rebuild:** once the box is at least 7 days old, rebuilds it from
+   the latest signed image, unless a guarded app is open. A skipped rebuild is
+   retried the next day. A fresh box already has the newest apps, so a run
+   that rebuilds stops here.
+3. **Daily in-place upgrades:** otherwise (box not due yet, or the rebuild
+   was skipped), checks Signal and Claude inside the box for newer versions,
+   upgrades each one that is closed, and leaves each one that is open alone.
 
-`cosign` is looked up on `PATH`, then at Homebrew's
-`/home/linuxbrew/.linuxbrew/bin/cosign`.
+| Situation | What happens | Notification |
+| --- | --- | --- |
+| New Signal or Claude version, app closed | Upgraded in place on the daily run | None (see the journal) |
+| New version, app open | Left alone; installed on the first daily run after you quit it | "Signal 8.x is ready" / "Claude 4.x is ready", once per new version |
+| Box is 7+ days old, an app is open | Rebuild skipped, retried daily | "Weekly apps update is waiting", once |
+| Box is 14+ days old, an app is open | Rebuild still skipped | "apps box is N days old", on every skipped run |
+| Rebuild starts / finishes | Box rebuilt (about a minute; launchers do not work meanwhile) | "Updating the apps box", then "apps box updated" |
+| Rebuild finished but a launcher is missing | Claude install retried, launcher re-exported | Critical notification pointing at the journal |
 
-Run it by hand with `systemctl --user start appbox-update`, or
-`host/appbox-update --force` to skip the age check (the running-app check
-still applies). `host/appbox-update --show-config` prints the settings in
-effect without changing anything. Logs: `journalctl --user -u appbox-update`.
+**To apply an update right away:** quit the app (tray > Quit), then run
+`systemctl --user start appbox-update`. That runs the same daily logic now: it
+upgrades the closed apps, or does the rebuild if one is due.
+`host/appbox-update --force` rebuilds now regardless of the box's age; it
+still refuses while a guarded app is open.
+
+The one gap: if you click an app in the second or two between the final
+"is it open?" check and the box being deleted, or during the minute the
+rebuild takes, that launch fails or is cut short. The "Updating the apps box"
+notification marks that window. App data lives in `~/.config` on the host, so
+nothing is lost either way.
+
+Rebuild details: the script waits up to 2 minutes for the network (it is
+often still coming up right after resume), and if the network or pull fails
+the service retries every 2 minutes, up to 5 times an hour, like `uupd`. It
+pulls and verifies the image signature, then recreates the box from that
+exact verified digest with `pull=false`, so nothing touches the network after
+the old box is deleted except the Claude Desktop install (retried, with the
+launcher re-exported, if it fails). It then deletes the previous image. The
+box is left stopped afterwards; the next launch starts it in about a second.
+
+Other details:
+
+- Notification state (which versions you were told about, whether this box
+  was nudged) lives in `~/.local/state/appbox/` and is cleared by a rebuild.
+- `cosign` is looked up on `PATH`, then at Homebrew's
+  `/home/linuxbrew/.linuxbrew/bin/cosign`.
+- `host/appbox-update --show-config` prints the settings in effect without
+  changing anything. Logs: `journalctl --user -u appbox-update`.
 
 ## Managing machines centrally
 
@@ -152,10 +185,18 @@ are tracked in [`docs/TODO.md`](docs/TODO.md).
      following the Signal block (check the key fingerprint with `fetch_key`),
      and add the package to the `apt-get install` line.
    - If its license does not allow redistribution, do not bake it in. Add the
-     repo only and install it from an init hook, like `claude-desktop-sync`.
-2. Find its real `.desktop` file: `distrobox enter apps -- dpkg -L <package> | grep '\.desktop$'`
-3. Add that full path to `exported_apps` in `distrobox.ini`.
-4. Push, wait for CI, then `distrobox assemble create --file distrobox.ini`.
+     repo only and install it from an install-only init hook, like
+     `claude-desktop-sync` (never upgrade from a hook; see
+     [How updates reach you](#how-updates-reach-you)).
+2. Push, and wait for CI to go green before the next steps.
+3. Find its real `.desktop` file: `distrobox enter apps -- dpkg -L <package> | grep '\.desktop$'`
+4. Add that full path to `exported_apps` in `distrobox.ini`.
+5. If it should be protected from rebuilds while open and upgraded in place
+   between rebuilds, add it to `guarded_apps` in `host/appbox-update` (the
+   name must be both its package name and its process name as `pgrep -x`
+   sees it), and give it a friendly name in `app_label`. Otherwise it only
+   updates with the weekly rebuild, which will close it if it is open.
+6. Push, then `distrobox assemble create --file distrobox.ini`.
 
 ## Ubuntu release upgrades (EOL)
 

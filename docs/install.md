@@ -158,13 +158,17 @@ systemd-run --user --wait --collect ~/claude/appbox/host/appbox-update --force
 
 - **Laptop that sleeps:** the timer's 04:30 run happens as soon as the lid
   opens. The script waits for the network and retries, so nothing is needed.
-- **Always on:** the timer runs every night, and if an app like Signal never
-  quits, every run skips. Once the box is twice its maximum age (14 days by
-  default) the script sends a desktop notification asking the owner to quit
-  the apps and run `systemctl --user start appbox-update`. Tell the owner
-  whether that will be routine on this machine and suggest options (quitting
-  Signal at night, or a different `APPBOX_MAX_AGE_DAYS`), without changing
-  the design.
+- **Always on:** the timer runs every night. An app that never quits is never
+  upgraded or rebuilt, by design. The owner gets "Signal 8.x is ready" once per
+  new version, "Weekly apps update is waiting" once when a rebuild is first
+  skipped, and "apps box is N days old" on every skipped run once the box is
+  twice its maximum age (14 days by default). Each tells them to quit the app
+  and run `systemctl --user start appbox-update`. Tell the owner whether that
+  will be routine on this machine and suggest options (quitting Signal at
+  night, or a different `APPBOX_MAX_AGE_DAYS`), without changing the design.
+
+See "How updates reach you" in the README for the full table of what happens
+and which notification goes with it.
 
 ## 8. Record the machine
 

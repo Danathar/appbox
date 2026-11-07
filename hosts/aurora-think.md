@@ -58,11 +58,20 @@ what was learned along the way.
    the checkout on every run and reads this machine's settings from
    [`hosts/aurora-think.env`](aurora-think.env). Re-ran `host/install`, which
    now does step 7 and prints the effective settings.
+9. Same day, closed the update gaps: the daily run now upgrades Signal and
+   Claude in place whenever they are closed, notifies once per new version
+   when one is open, and nudges once when a weekly rebuild is first skipped.
+   The box-start hook became install-only. Tested on this machine against the
+   real box: a closed, downgraded Claude was upgraded; an open one was left
+   alone with a single notification and upgraded once closed; the 7- and
+   14-day nudges fired as designed; and `notify-send` works from the systemd
+   user service.
 
 ## Current configuration
 
-Settings: [`hosts/aurora-think.env`](aurora-think.env) (defaults: recreate
-weekly, self-update on). Check what is in effect with
+Settings: [`hosts/aurora-think.env`](aurora-think.env) (defaults: rebuild
+weekly, upgrade closed apps daily, self-update on). Notification state is in
+`~/.local/state/appbox/`. Check what is in effect with
 `~/claude/appbox/host/appbox-update --show-config`.
 
 | Path | What |
@@ -120,6 +129,13 @@ These shaped the design and are worth knowing on the next host.
   (`Exited (143)`): systemd cleans up the unit's processes when the oneshot
   finishes. This is harmless. The next launcher click starts it again in
   about a second.
+- The first design upgraded Claude in the background from the box-start
+  hook. The box usually starts because an app was just clicked, so that
+  replaced files under a starting app. Upgrades moved to the host timer,
+  which can see whether each app is open.
+- `func && ...` (and `if func`) turns off bash's `errexit` inside `func`. An
+  early draft called the rebuild that way, which would have let a failed pull
+  or signature check carry on. Caught in review, before it ran.
 - Ubuntu 26.04's coreutils is a single multicall binary that resolves its
   own path, so a renamed copy of `sleep` cannot fake a process name in tests.
   Use `prctl(PR_SET_NAME)` instead.

@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# Recreate the appbox distrobox from the latest signed image.
+# Keep the appbox distrobox and its apps current, without ever touching an app
+# that is open.
 #
 # Run daily by appbox-update.timer, which on a laptop usually means right
-# after the lid opens. Recreates only when the box is at least
-# APPBOX_MAX_AGE_DAYS old, and never while Signal or Claude Desktop is running
-# in it, so a skipped day is retried the next day instead of waiting a week.
+# after the lid opens. Each run:
+#   - Rebuilds the box from the latest signed image once it is at least
+#     APPBOX_MAX_AGE_DAYS old, unless a guarded app is running in it. A
+#     skipped rebuild is retried the next day; you get a notification the
+#     first time one is skipped, and on every skipped run once the box is
+#     twice that age.
+#   - Otherwise (box not due yet, or the rebuild was skipped), upgrades each
+#     guarded app in place inside the box, but only if that app is closed. An
+#     open app with an update gets a notification asking you to quit it,
+#     once per new version.
 #
 # Each run first fast-forwards the repo checkout this script lives in, so
 # changes pushed to the repo (this script, distrobox.ini, hosts/*.env) reach
@@ -16,9 +24,15 @@
 #        appbox-update --show-config    print the effective settings and exit
 set -euo pipefail
 
+# Apps that block a rebuild while running and are upgraded in place between
+# rebuilds. Each entry must be both the Debian package name and the process
+# name (as `pgrep -x` sees it).
+guarded_apps="claude-desktop signal-desktop"
+
 repo_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 host="$(hostname -s)"
 host_env="${repo_dir}/hosts/${host}.env"
+state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/appbox"
 
 # Read KEY=VALUE settings for this machine. Only known keys are accepted, and
 # a variable already set in the environment (e.g. a systemd drop-in) wins.
@@ -89,8 +103,10 @@ ini:            ${ini}
 box:            ${box}
 image:          ${image}
 max age (days): ${max_age_days}
+guarded apps:   ${guarded_apps}
 public key:     ${pubkey}
 cosign:         ${cosign}
+state:          ${state_dir}
 EOF
     exit 0
 fi
@@ -99,15 +115,37 @@ notify() {
     notify-send -a appbox -i system-software-update "$@" 2> /dev/null || true
 }
 
+# Friendly name for a guarded app, for notifications.
+app_label() {
+    case "$1" in
+        claude-desktop) echo "Claude" ;;
+        signal-desktop) echo "Signal" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# Run a command in the box, starting it first if needed.
+in_box() {
+    distrobox enter "${box}" -- "$@" < /dev/null
+}
+
+# Print "<name> (pid N)" and succeed if any of the given apps (default: all
+# guarded apps) is running in the box.
+#
 # distrobox boxes share the host PID namespace, so pgrep alone also sees apps
 # running in other boxes. A process belongs to this box if it shares the
 # mount namespace of the box's init process.
 app_running_in_box() {
-    local box_pid box_ns pid
-    box_pid="$(podman inspect -f '{{.State.Pid}}' "${box}")"
+    local names="${*:-${guarded_apps}}" box_pid box_ns pid
+    # If podman can't say, assume something is running: never guess "safe".
+    if ! box_pid="$(podman inspect -f '{{.State.Pid}}' "${box}")" ||
+        ! [ "${box_pid}" -ge 0 ] 2> /dev/null; then
+        echo "unknown (could not inspect '${box}')"
+        return 0
+    fi
     [ "${box_pid}" -gt 0 ] || return 1 # box is stopped
     box_ns="$(readlink "/proc/${box_pid}/ns/mnt")"
-    for pid in $(pgrep -x 'claude-desktop|signal-desktop'); do
+    for pid in $(pgrep -x "$(echo "${names}" | tr ' ' '|')"); do
         if [ "$(readlink "/proc/${pid}/ns/mnt" 2> /dev/null)" = "${box_ns}" ]; then
             echo "$(cat "/proc/${pid}/comm" 2> /dev/null) (pid ${pid})"
             return 0
@@ -129,75 +167,133 @@ wait_for_network() {
     return 1
 }
 
+# A due rebuild was skipped because an app is open. Say so the first time for
+# this box, and on every run once the box is twice its maximum age.
+nudge_skipped_rebuild() {
+    local running="$1" marker
+    marker="${state_dir}/nudged-$(podman inspect -f '{{.Id}}' "${box}" | cut -c1-12)"
+    if [ "${age_days}" -ge $((max_age_days * 2)) ]; then
+        notify "apps box is ${age_days} days old" \
+            "Quit Signal and Claude (tray > Quit), then run: systemctl --user start appbox-update"
+    elif [ ! -e "${marker}" ]; then
+        notify "Weekly apps update is waiting" \
+            "It runs once Signal and Claude are closed (tray > Quit): on the next daily check, or right away with: systemctl --user start appbox-update"
+        touch "${marker}"
+    fi
+    echo "Skipping rebuild: ${running} is running in '${box}'. Will retry next run."
+}
+
+# Rebuild the box from the latest verified image. Sets rebuild_skipped=1 if an
+# app started while pulling, so the caller can fall back to in-place upgrades.
+# (A flag, not a return code: calling this as `rebuild_box && ...` would turn
+# off errexit inside it, and a failed pull or signature check must abort.)
+rebuild_skipped=0
+rebuild_box() {
+    local digest pinned old_image tmp_ini running app missing=0
+
+    # Pull and verify before touching the box, then recreate from that exact
+    # digest with pull=false. `assemble --replace` deletes the old box first,
+    # so nothing that can fail on the network may happen after that point
+    # except the Claude Desktop install, which is checked below.
+    echo "Pulling ${image}"
+    podman pull -q "${image}" > /dev/null
+    digest="$(podman image inspect -f '{{.Digest}}' "${image}")"
+    pinned="${image%:*}@${digest}"
+    echo "Verifying signature of ${pinned}"
+    "${cosign}" verify --key "${pubkey}" "${pinned}" > /dev/null
+
+    old_image="$(podman inspect -f '{{.Image}}' "${box}")"
+
+    # Check again: the pull can take a while.
+    if running="$(app_running_in_box)"; then
+        echo "Skipping rebuild: ${running} started in '${box}' during the pull."
+        rebuild_skipped=1
+        return 0
+    fi
+
+    tmp_ini="$(mktemp --suffix .ini)"
+    trap 'rm -f "${tmp_ini}"' EXIT
+    sed -e "s|^image=.*|image=${pinned}|" -e 's|^pull=.*|pull=false|' "${ini}" > "${tmp_ini}"
+
+    notify "Updating the apps box" "Signal and Claude will be back in a minute or two."
+    echo "Rebuilding '${box}' from ${pinned} (was ${age_days} day(s) old)"
+    distrobox assemble create --replace --file "${tmp_ini}"
+    rm -f "${state_dir}"/nudged-* "${state_dir}"/offered-*
+
+    # If the Claude Desktop install failed during init (flaky network), its
+    # launcher was not exported. Retry the install once, then export again.
+    for app in ${exported_apps}; do
+        [ -e "${HOME}/.local/share/applications/${box}-$(basename "${app}")" ] && continue
+        echo "Launcher for ${app} is missing; retrying install and export"
+        in_box sudo /usr/libexec/appbox/claude-desktop-sync || true
+        in_box distrobox-export --app "${app}" || missing=1
+    done
+
+    # Drop the previous image if nothing else uses it.
+    if [ "${old_image}" != "$(podman inspect -f '{{.Image}}' "${box}")" ]; then
+        podman rmi "${old_image}" > /dev/null 2>&1 || true
+    fi
+
+    if [ "${missing}" -ne 0 ]; then
+        notify -u critical "apps box updated, but a launcher is missing" "See: journalctl --user -u appbox-update"
+        exit 1
+    fi
+    notify "apps box updated" "Signal and Claude are ready."
+}
+
+# Upgrade each guarded app inside the box, but only while it is closed. An
+# open app with an update gets one notification per new version.
+upgrade_apps_in_place() {
+    local pkg installed candidate running marker label
+    echo "Checking for app updates in '${box}'"
+    in_box sudo apt-get -qq -o Acquire::Retries=2 update
+    for pkg in ${guarded_apps}; do
+        # shellcheck disable=SC2016 # ${Version} is a dpkg-query field, not a shell variable
+        installed="$(in_box dpkg-query -W -f '${Version}' "${pkg}" 2> /dev/null)" || continue
+        candidate="$(in_box apt-cache policy "${pkg}" | awk '/Candidate:/ { print $2 }')"
+        if [ -z "${candidate}" ] || [ "${candidate}" = "(none)" ] || [ "${candidate}" = "${installed}" ]; then
+            echo "${pkg} ${installed} is up to date"
+            continue
+        fi
+        label="$(app_label "${pkg}")"
+        if running="$(app_running_in_box "${pkg}")"; then
+            echo "${pkg} ${candidate} is available, but ${running} is running; leaving ${installed}"
+            marker="${state_dir}/offered-${pkg}-${candidate}"
+            if [ ! -e "${marker}" ]; then
+                notify "${label} ${candidate} is ready" \
+                    "Quit ${label} (tray > Quit) to install it: it installs on the next daily check, or right away with: systemctl --user start appbox-update"
+                touch "${marker}"
+            fi
+        else
+            echo "Upgrading ${pkg} ${installed} -> ${candidate}"
+            in_box sudo env DEBIAN_FRONTEND=noninteractive apt-get -y -q install --only-upgrade "${pkg}"
+            rm -f "${state_dir}/offered-${pkg}-"*
+        fi
+    done
+}
+
 if ! podman container exists "${box}"; then
     echo "Box '${box}' does not exist; create it once with:"
     echo "  distrobox assemble create --file ${ini}"
     exit 0
 fi
+mkdir -p "${state_dir}"
 
 created="$(podman inspect -f '{{.Created.Unix}}' "${box}")"
 age_days=$((($(date +%s) - created) / 86400))
-if [ "${force}" -eq 0 ] && [ "${age_days}" -lt "${max_age_days}" ]; then
-    echo "Box '${box}' is ${age_days} day(s) old (< ${max_age_days}); nothing to do."
-    exit 0
-fi
 
-if running="$(app_running_in_box)"; then
-    echo "Skipping recreate: ${running} is running in '${box}'. Will retry next run."
-    # On a machine where Signal never quits this would skip forever, so speak
-    # up once the box is twice its normal age.
-    if [ "${age_days}" -ge $((max_age_days * 2)) ]; then
-        notify "apps box is ${age_days} days old" \
-            "Quit Signal and Claude, then run: systemctl --user start appbox-update"
+if [ "${force}" -eq 1 ] || [ "${age_days}" -ge "${max_age_days}" ]; then
+    if running="$(app_running_in_box)"; then
+        nudge_skipped_rebuild "${running}"
+    else
+        wait_for_network
+        rebuild_box
+        # A fresh box already has the latest apps, so stop here.
+        [ "${rebuild_skipped}" -eq 1 ] || exit 0
     fi
-    exit 0
+else
+    echo "Box '${box}' is ${age_days} day(s) old; rebuild due at ${max_age_days}."
 fi
 
-# Pull and verify before touching the box, then recreate from that exact
-# digest with pull=false. `assemble --replace` deletes the old box first, so
-# nothing that can fail on the network may happen after that point except the
-# Claude Desktop install, which is checked below.
 wait_for_network
-echo "Pulling ${image}"
-podman pull -q "${image}" > /dev/null
-digest="$(podman image inspect -f '{{.Digest}}' "${image}")"
-pinned="${image%:*}@${digest}"
-echo "Verifying signature of ${pinned}"
-"${cosign}" verify --key "${pubkey}" "${pinned}" > /dev/null
-
-old_image="$(podman inspect -f '{{.Image}}' "${box}")"
-
-# Check again: the pull can take a while.
-if running="$(app_running_in_box)"; then
-    echo "Skipping recreate: ${running} started in '${box}' during the pull."
-    exit 0
-fi
-
-tmp_ini="$(mktemp --suffix .ini)"
-trap 'rm -f "${tmp_ini}"' EXIT
-sed -e "s|^image=.*|image=${pinned}|" -e 's|^pull=.*|pull=false|' "${ini}" > "${tmp_ini}"
-
-notify "Updating the apps box" "Signal and Claude will be back in a minute or two."
-echo "Recreating '${box}' from ${pinned} (was ${age_days} day(s) old)"
-distrobox assemble create --replace --file "${tmp_ini}"
-
-# If the Claude Desktop install failed during init (flaky network), its
-# launcher was not exported. Retry the install once, then export again.
-missing=0
-for app in ${exported_apps}; do
-    [ -e "${HOME}/.local/share/applications/${box}-$(basename "${app}")" ] && continue
-    echo "Launcher for ${app} is missing; retrying install and export"
-    distrobox enter "${box}" -- sudo /usr/libexec/appbox/claude-desktop-sync < /dev/null || true
-    distrobox enter "${box}" -- distrobox-export --app "${app}" < /dev/null || missing=1
-done
-
-# Drop the previous image if nothing else uses it.
-if [ "${old_image}" != "$(podman inspect -f '{{.Image}}' "${box}")" ]; then
-    podman rmi "${old_image}" > /dev/null 2>&1 || true
-fi
-
-if [ "${missing}" -ne 0 ]; then
-    notify -u critical "apps box updated, but a launcher is missing" "See: journalctl --user -u appbox-update"
-    exit 1
-fi
-notify "apps box updated" "Signal and Claude are ready."
+upgrade_apps_in_place
