@@ -6,7 +6,7 @@
 [![Nightly compliance](https://github.com/Danathar/appbox/actions/workflows/nightly-compliance.yml/badge.svg?branch=main)](https://github.com/Danathar/appbox/actions/workflows/nightly-compliance.yml)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-1f6feb)](https://deepwiki.com/Danathar/appbox)
 [![Maintenance assisted by Hivecommons Hive](https://img.shields.io/badge/maintenance%20assisted%20by-Hivecommons%20Hive-1f6feb)](https://github.com/hivecommons/hive)
-[![ACMM L6 Fully Autonomous](https://img.shields.io/badge/ACMM-L6%20Fully%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
+[![ACMM L6 Autonomous](https://img.shields.io/badge/ACMM-L6%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
 [![AI assisted](https://img.shields.io/badge/AI-assisted-d29922)](#about-this-project)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
@@ -250,10 +250,10 @@ public issue; report it privately through the repository's Security tab.
 ## Maintained with Hive (ACMM L6)
 
 Maintenance is assisted by [Hivecommons Hive](https://github.com/hivecommons/hive),
-which runs a fleet of AI agents against this repo at ACMM level 6 (Fully
-Autonomous). The repository is maintained by [@Danathar](https://github.com/Danathar).
+which runs a fleet of AI agents against this repo at ACMM level 6
+(Autonomous). The repository is maintained by [@Danathar](https://github.com/Danathar).
 
-**What L6 permits here:** this is a fully autonomous hive. Agents file issues
+**What L6 permits here:** this is an autonomous hive. Agents file issues
 and open pull requests, and every agent pull request merges once its required
 checks pass, unless it carries `hold`. Hive merges them one at a time through
 its serialized merge lane. No pull request waits for a person to merge it,
