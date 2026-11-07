@@ -39,6 +39,7 @@ move its GUI apps out of whatever distroboxes they live in now.
    (`docs/install.md` step 8 has the exact commands). A merge reaches every
    enrolled machine on its next timer run. Follow
    `docs/working-on-the-repo.md` for every repo change.
-6. Finish by recording this machine in `hosts/` through a pull request,
-   merging it, switching the checkout back to `main`, and giving me the
-   report described at the end of `docs/install.md`.
+6. Finish by recording this machine in `hosts/` through a pull request
+   (`docs/install.md` step 8). Don't merge it yourself: give me the link with
+   the report described at the end of `docs/install.md`, and once it has
+   merged, switch the checkout back to `main`.

@@ -191,10 +191,10 @@ and which notification goes with it.
   facts, what was there before, what was done, current configuration,
   leftovers kept on purpose, and anything new learned.
 - Add the machine to the "Machines so far" line in `README.md`.
-- Open a pull request with these files and merge it once its required checks
-  pass (about 10 minutes, mostly the image build test). `main` takes no direct
-  pushes, and the checkout must end up back on `main`, because the timer's
-  self-update follows whatever branch is checked out:
+- Open a pull request with these files. `main` takes no direct pushes. Write
+  the description from `.github/pull_request_template.md` (Tier 2, because it
+  touches `hosts/`; the machine impact; the checks you ran) into a file, and
+  pass that file, because `--fill` would skip the template:
 
   ```sh
   cd ~/claude/appbox
@@ -203,13 +203,20 @@ and which notification goes with it.
   git add hosts/<hostname>.env hosts/<hostname>.md README.md
   git commit -s -m "Record <hostname>"
   git push -u origin hosts/<hostname>
-  gh pr create -R Danathar/appbox --fill
-  gh pr checks -R Danathar/appbox --watch
-  gh pr merge -R Danathar/appbox --squash --delete-branch
-  git switch main && git pull --ff-only
+  gh pr create -R Danathar/appbox --title "Record <hostname>" --body-file <description file>
+  gh pr checks -R Danathar/appbox --watch    # about 10 minutes, mostly the image build test
   ```
 
-  If a check fails, fix it on the branch and push again; never merge red.
+  If a check fails, fix it on the branch and push again. When the checks are
+  green, **don't merge it yourself** (`AGENTS.md`: agents never merge their
+  own pull requests). Give the owner the link; the owner, or Hive's
+  serialized merge lane, merges it. Once it has merged, put the checkout back
+  on `main`, because the timer's self-update follows whatever branch is
+  checked out:
+
+  ```sh
+  git switch main && git pull --ff-only
+  ```
 
 ## Report
 

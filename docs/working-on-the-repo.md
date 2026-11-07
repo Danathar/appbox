@@ -78,8 +78,9 @@ than taking anyone's word for it.
 [`branch-protection.md`](branch-protection.md)), so every change, including a
 new machine's `hosts/<hostname>.md`, goes on a branch:
 `git switch -c <branch>`, commit with `git commit -s`, `git push -u origin <branch>`,
-then `gh pr create -R Danathar/appbox`. It merges once the required checks
-pass.
+then `gh pr create -R Danathar/appbox` with a description written from
+`.github/pull_request_template.md`. It can merge once the required checks
+pass; an agent session never merges its own pull request.
 
 The checkout the timer uses can also be the one you edit, but:
 
