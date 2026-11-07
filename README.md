@@ -132,6 +132,9 @@ protected accordingly.
 
 Machines so far: [`aurora-think`](hosts/aurora-think.md) (laptop).
 
+Open follow-ups (branch protection, signed commits, key backup, and more)
+are tracked in [`docs/TODO.md`](docs/TODO.md).
+
 ## Adding an app
 
 1. Install it in the image:
