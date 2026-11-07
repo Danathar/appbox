@@ -65,21 +65,19 @@ what was learned along the way.
 | `~/.config/Signal`, `~/.config/Claude` | Live app data, used by the `apps` box. |
 | `~/.local/share/applications/apps-*.desktop` | Exported launchers ("Signal (on apps)", "Claude (on apps)"). |
 
-### Leftovers, kept on purpose until you are satisfied
+### Cleanup
 
-- The `ubuntu-signal` box (stopped) and its two launchers, which still show in
-  the app grid as "(on ubuntu-signal)". **Do not open the old Signal launcher.**
-  Two copies of the same linked device would diverge.
-- `~/ubuntu-signal/` (about 6 GB, the pre-migration copy of the data).
-- `~/.gnupg/` was created by a `gpg --show-keys` fingerprint check during setup.
-  It only contains an empty trustdb and is harmless.
+After the migration was confirmed, the same day:
 
-To clean up once you are happy (not done yet):
+- `distrobox rm --force ubuntu-signal` removed the old box and its exported
+  launchers.
+- `rm -rf ~/ubuntu-signal` removed the old home (5.9 GB). Besides the copied
+  Signal and Claude data, it held nothing worth keeping: shell dotfiles,
+  caches, a GPG keyring with no keys, and one Claude Code session transcript
+  from a scratch workspace.
 
-```sh
-distrobox rm ubuntu-signal         # also removes its exported launchers
-rm -rf ~/ubuntu-signal             # old data copy
-```
+Still present: `~/.gnupg/`, created by a `gpg --show-keys` fingerprint check
+during setup. It only contains an empty trustdb and is harmless.
 
 ## Cowork
 
