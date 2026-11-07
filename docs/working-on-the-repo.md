@@ -16,7 +16,7 @@ what it finds. There is no staging step.
 | `host/*.service`, `host/*.timer` | No | **Not until each machine runs `systemctl --user daemon-reload`** (re-running `host/install` does it). Self-update pulls the new file but systemd keeps the old one loaded. |
 | `*.md`, `docs/` | No | Nothing to deploy |
 
-Merging a Dependabot or Renovate PR is a push to `main` too.
+Merging a Renovate PR is a push to `main` too. Renovate is the only dependency bot; its Dependency Dashboard is issue #8.
 
 ## Before you push
 

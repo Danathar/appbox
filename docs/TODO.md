@@ -54,17 +54,23 @@ order within each section. Tick items off or delete them as they are done.
 
 ## Maintenance
 
-- [ ] **Pick one dependency bot.** Both Dependabot (`.github/dependabot.yml`)
-  and Renovate (`renovate.json`) are active and open duplicate PRs for the
-  same action bumps. Keep one (Renovate also handles digests and can
-  auto-merge when CI passes), delete the other's config, and close its PRs.
+- [x] **Pick one dependency bot.** Done 2026-11-07: Renovate (`renovate.json`,
+  Dependency Dashboard in issue #8). Dependabot's config was removed; its
+  security-update PRs and alerts were already off.
 
-- [ ] **Merge or close the open bot PRs** (#2, #6, and the Renovate ones).
+- [x] **Merge or close the open bot PRs.** Done 2026-11-07: merged #2
+  (`actions/checkout` v7.0.1) and #6 (`docker/login-action` v4.7.0); closed
+  #9 and #10 in favor of the v3 upgrade below.
 
-- [ ] **Node 20 deprecation.** CI warns that `redhat-actions/buildah-build`
-  and `redhat-actions/push-to-registry` target Node 20, which GitHub is
-  retiring. Check for newer releases, or replace both with plain `buildah`
-  and `podman push` commands in `run:` steps.
+- [ ] **Node 20 deprecation: move the redhat actions to v3.** CI warns that
+  `redhat-actions/buildah-build` and `redhat-actions/push-to-registry` v2
+  target Node 20, which GitHub is retiring, and v2 is now formally
+  deprecated. Both have a v3 on Node 24 (`buildah-build` v3.1.0 also fixes
+  silent data corruption with fuse-overlayfs on ubuntu-24.04 runners, the
+  runner this workflow uses). The other v3 changes are new optional inputs,
+  so the existing inputs should work unchanged. Open it as a PR pinned by
+  SHA and merge once its CI passes. Blocked until sigstore's Rekor outage
+  (2026-11-07) is over, because CI cannot install cosign until then.
 
 - [ ] **Shrink the weekly download.** The whole app layer (Signal, Claude's
   dependencies, qemu) is one `RUN`, so every daily build changes about 1 GB
