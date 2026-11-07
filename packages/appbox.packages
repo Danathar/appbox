@@ -1,0 +1,2 @@
+# Distro packages baked into the image, one per line.
+# Apps from third-party repos (Signal) are installed in scripts/appbox.sh.

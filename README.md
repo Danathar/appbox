@@ -1,122 +1,119 @@
-# boxkit
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ublue-os/boxkit/badge)](https://scorecard.dev/viewer/?uri=github.com/ublue-os/boxkit)
+# appbox
 
-## What is boxkit ?
+A CI-built [distrobox](https://distrobox.it/) image for running desktop apps
+(currently Signal Desktop and Claude Desktop) on an atomic Fedora host, without
+hand-maintaining a pet container. Built with the
+[boxkit](https://github.com/ublue-os/boxkit) pattern on top of
+[`ghcr.io/ublue-os/ubuntu-toolbox`](https://github.com/ublue-os/toolboxes),
+which already carries the distrobox host-integration pieces.
 
-boxkit is a set of GitHub actions and skeleton files to build custom toolbox and distrobox images. Basically, clone this repo, make any changes you need, and then generate your custom images.
+- Image: `ghcr.io/danathar/appbox` (`:latest`, plus a dated tag such as `:20261107` for every build)
+- Built daily, on push to `main`, and on demand (`gh workflow run build-appbox`)
+- Signed with cosign; see [Verifying the image](#verifying-the-image)
 
-Note that boxkit can be used independently of Fedora or uBlue OS.
-boxkit requires you atleast understand the basics of [ContainerFiles](https://www.mankier.com/5/Containerfile) and [shell scripting.](https://www.shellscript.sh/)
+## Layout
 
-## Base images
+| Path | What it is |
+| --- | --- |
+| `ContainerFiles/appbox` | The image definition. `FROM` line and `UBUNTU_VERSION` guard live here. |
+| `scripts/appbox.sh` | Build-time setup: apt repos, keys, Signal, baked packages. |
+| `scripts/claude-desktop-sync` | Installs or upgrades Claude Desktop at box start (baked into the image). |
+| `packages/appbox.packages` | Extra Ubuntu packages to bake in, one per line. |
+| `keys/ublue-os-toolboxes.pub` | ublue's public key; CI refuses to build on an unsigned base. |
+| `distrobox.ini` | Box definition for `distrobox assemble`, including exported launchers. |
+| `host/` | systemd user timer and script that recreate the box from the fresh image. |
 
-You can use the Docker/OCI container image of practically any distribution as your base image to build your custom image off of. Note that the base images can also be used directly with distrobox/toolbox without any modifications.
+## What is baked in vs installed at box start
 
-Here is a list of some base images you can use:
+| App | Where | Why |
+| --- | --- | --- |
+| Signal Desktop | Baked into the image | AGPL-3.0, fine to redistribute. Launches immediately after a recreate. |
+| Claude Desktop | Installed by `init_hooks` on every box start | Proprietary. The public image only carries Anthropic's apt key and source, never the package. |
 
-- [toolbx Community images](https://github.com/toolbx-images/images)
-- [uBlue toolboxes](https://github.com/ublue-os/toolboxes)
+The image does pre-install Claude Desktop's dependencies (all from the Ubuntu
+archive, including the qemu/OVMF/virtiofsd stack Cowork uses), so the
+box-start install only downloads the app itself. On the first start of a new
+box it installs synchronously so the launcher can be exported. On later starts
+it upgrades in the background and logs to `/var/log/appbox-claude-sync.log`
+inside the box. The hook always exits 0, because a failing init hook would
+stop the box (and Signal) from starting, for example when booting offline.
 
-Try to derive your custom images from these base images so we can all help maintain them over time, you can't have bling without good stock!
+Signal's official apt repo is **amd64 only**, so this image is built for
+amd64 only. Claude Desktop's repo also has arm64, but Signal would need a
+different source (Flatpak or AppImage) on an arm64 host.
 
-Tag your image with `boxkit` to share with others!
+## Using it on a machine
 
-## How to use boxkit
+Works as-is on Intel and AMD GPUs (Mesa is in the base image). On an NVIDIA
+host, add `nvidia=true` to `distrobox.ini`.
 
-### How everything is organized
-
-- The ContainerFiles for the custom images are stored in the `ContainerFiles/` folder.
-- The setup scripts for the custom images (if needed) are stored in the `scripts/` folder.
-- The package lists for the setup scripts (if needed) are stored in the `packages/` folder.
-- The Github workflow that generates the images is `.github/workflows/build-boxkit.yml`
-
-### How to make your own images
-
-1. Fork this repo.
-2. Add the ContainerFiles for your custom images to the `ContainerFiles/` folder.
-3. Add the setup scripts you want to use for your custom images (if needed) to the `scripts/` folder.
-4. Add the package list you want to use for your custom images (if needed) to the `packages/` folder.
-5. Add the name of the ContainerFiles of your custom images to the following section in `build-boxkit.yml`:
-
-```yaml
-jobs:
-  strategy:
-    matrix:
-      containerfile:
-      - [your_custom_image_1]
-      - [your_custom_image_2]
+```sh
+git clone https://github.com/Danathar/appbox ~/claude/appbox
+cd ~/claude/appbox
+distrobox assemble create --file distrobox.ini
 ```
 
-**Note:** 
-- You can choose to only generate a single custom image if you want. 
-- You can remove the boxkit and fedora-example images provided in the boxkit repo and only generate your own custom images.
-- The `scripts/` and `packages/` folders are optional, you can generate your custom images without them, but they are highly recommended to use.
-- The name of your custom image and ContainerFile **MUST** be the same. <br>
+That creates a box named `apps`, installs Claude Desktop, and exports the
+Signal and Claude launchers to the app grid. App data lives in your normal
+home (`~/.config/Signal`, `~/.config/Claude`), so it survives recreating the
+box.
 
-  e.g. If you want to create a custom image named *appbox-debian*, the corresponding ContainerFile must be named `appbox-debian` and must be stored inside the `ContainerFiles/` folder.
-- The URL for the generated images will be `ghcr.io/<username>/<image_name>` by default.
+### Automatic recreate
 
-### Signing your images
-Although optional, it is **Highly recommended** you use container signing for your images.
-To sign your images, follow the steps below:
+```sh
+mkdir -p ~/.config/systemd/user
+ln -sf ~/claude/appbox/host/appbox-update.service ~/.config/systemd/user/
+ln -sf ~/claude/appbox/host/appbox-update.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now appbox-update.timer
+```
 
-1. [Install `cosign`.](https://docs.sigstore.dev/cosign/system_config/installation/)
-2. Generate cosign keypairs. <br>
-   When it asks you to enter a password, **DONOT ENTER A PASSWORD,** Just press enter.
+The timer runs daily. `host/appbox-update` recreates the box only when it is
+at least 7 days old, and skips if Signal or Claude Desktop is running in it, so
+an open session is never killed and a skipped day is retried the next day. It
+pulls and verifies the image signature before touching the box, so a failed
+pull leaves the existing box in place. The service expects the checkout at
+`~/claude/appbox`; edit `ExecStart` if yours lives elsewhere.
 
-   ```bash
-   cosign generate-key-pair
-   ```
+Run it by hand with `systemctl --user start appbox-update`, or
+`host/appbox-update --force` to skip the age check. Logs:
+`journalctl --user -u appbox-update`.
 
-   This will create two files named `cosign.pub` and `cosign.key`, which are your public and private keys, respectively.
-3. Go to the repository settings of your forked boxkit github repo. (**NOT your GitHub/Account settings**)
-   - Go to *Security* > *Secrets and variables* > *Actions*
-   - Click on *New repository secret*
-   - Create a new secret named `SIGNING_SECRET`
-   - Copy the content inside your `cosign.key` file to the textbox that appears when you create the `SIGNING_SECRET` repository secret.
-   - Alternatively, you can use GitHub's CLI client.
-     ```bash
-     gh secret set SIGNING_SECRET < cosign.key
-     ```
+## Adding an app
 
-   **DONOT SHARE YOUR `cosign.key` FILE OR `SIGNING_SECRET` PUBLICLY, STORE THE `cosign.key` FILE SOMEWHERE SECURE AND DONOT INCLUDE IT IN YOUR GIT REPOSITORY.**
+1. Install it in the image:
+   - From Ubuntu's archive: add the package name to `packages/appbox.packages`.
+   - From a vendor apt repo: add the key and source in `scripts/appbox.sh`,
+     following the Signal block (check the key fingerprint with `fetch_key`),
+     and add the package to the `apt-get install` line.
+   - If its license does not allow redistribution, do not bake it in. Add the
+     repo only and install it from an init hook, like `claude-desktop-sync`.
+2. Find its real `.desktop` file: `distrobox enter apps -- dpkg -L <package> | grep '\.desktop$'`
+3. Add that full path to `exported_apps` in `distrobox.ini`.
+4. Push, wait for CI, then `distrobox assemble create --file distrobox.ini`.
 
-4. Delete the `cosign.pub` key that exists on the repository's root folder and copy the `cosign.pub` file you created to the repository's root folder.
+## Ubuntu release upgrades (EOL)
 
-Congratulations, you have successfully enabled container signing for all your custom images.
+`ubuntu-toolbox` only publishes `:latest`, so the Containerfile pins the
+release with `ARG UBUNTU_VERSION`. If ublue moves `:latest` to a new release,
+the build fails instead of shipping a surprise upgrade, and the old image
+stays on ghcr. To upgrade:
 
-## Using the custom images
+1. Change `UBUNTU_VERSION` in `ContainerFiles/appbox` (for example `26.04` to `28.04`).
+2. Push and let CI build. Package renames (the `t64` transition is a recent
+   example) show up as `apt-get install` failures in the build log; fix
+   `packages/appbox.packages` until it is green.
+3. Recreate the box. App data lives in `~/.config`, so nothing is lost.
 
-We use the default boxkit image as an example to show you how to create a distrobox/toolbox container using a custom image.
+To roll back after a bad update, point `image=` in `distrobox.ini` at an older
+dated tag and recreate.
 
-If you use distrobox:
+## Verifying the image
 
-    distrobox create -i ghcr.io/ublue-os/boxkit -n boxkit
-    distrobox enter boxkit
-    
-If you use toolbox:
+```sh
+cosign verify --key cosign.pub ghcr.io/danathar/appbox:latest
+```
 
-    toolbox create -i ghcr.io/ublue-os/boxkit -c boxkit
-    toolbox enter boxkit
-
-**NOTE:**
-- You can use `chezmoi` to pull down your dotfiles and set up git sync.
-- It is recommended to use the [Ptyxis](https://flathub.org/apps/app.devsuite.Ptyxis) terminal, which provides seamless integration with various podman/distrobox/toolbx containers. 
-
-## Custom images built with boxkit
-
-Here is a list of some awesome custom images built using boxkit.
-
-- [DaVinci Box](https://github.com/zelikos/davincibox) - Container for DaVinci Resolve installation and runtime dependencies on Linux.
-- [obs-studio-portable](https://github.com/ublue-os/obs-studio-portable) - OCI container image of OBS Studio that bundles a curated collection of 3rd party plugins.
-- [bazzite-arch](https://github.com/ublue-os/bazzite-arch) - A ready-to-game Arch Linux based OCI designed for use exclusively in distrobox.
-
-## Verification
-
-These images are signed with sisgstore's [cosign](https://docs.sigstore.dev/quickstart/quickstart-cosign/). You can verify the signature by downloading the `cosign.pub` key from this repo and running the following command:
-
-    cosign verify --key cosign.pub ghcr.io/ublue-os/boxkit
-    
-If you're forking this repo you should [read the docs](https://docs.github.com/en/actions/security-guides/encrypted-secrets) on keeping secrets in github. You need to [generate a new keypair](https://docs.sigstore.dev/cosign/key_management/signing_with_self-managed_keys/) with cosign. The public key can be in your public repo (your users need it to check the signatures), and you can paste the private key in Settings -> Secrets -> Actions.
-
-![Alt](https://repobeats.axiom.co/api/embed/7c5f037d792c6deb1946e5bc040f64a0fc8abeab.svg "Repobeats analytics image")
+`cosign.pub` is in this repo. The private key is the `SIGNING_SECRET`
+repository secret. CI also verifies its own signature after signing, and
+verifies ublue's signature on the base image before building.

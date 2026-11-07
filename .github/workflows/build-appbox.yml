@@ -1,0 +1,136 @@
+name: build-appbox
+on:
+  workflow_dispatch: # allow manually triggering builds
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    paths-ignore: # these don't change the image
+      - '**.md'
+      - 'distrobox.ini'
+      - 'host/**'
+  schedule:
+    - cron: '17 5 * * *' # daily, picks up Ubuntu and Signal updates
+
+env:
+  IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  push-ghcr:
+    name: Build and push image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        containerfile:
+          - appbox
+    steps:
+      # Clone code to runner
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: "v2.6.1"
+
+      # Refuse to build on top of a base image ublue didn't sign
+      - name: Verify base image signature
+        run: |
+          base=$(awk '/^FROM / { print $2; exit }' ./ContainerFiles/${{ matrix.containerfile }})
+          cosign verify --key keys/ublue-os-toolboxes.pub "${base}" > /dev/null
+          echo "Verified ${base}"
+
+      # latest, plus a dated tag to roll back to if an update breaks something
+      - name: Image tags
+        id: tags
+        run: echo "tags=latest $(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      # Build metadata
+      - name: Image Metadata
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        id: meta
+        with:
+          images: |
+            ${{ matrix.containerfile }}
+          labels: |
+            io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${{ github.repository }}/main/README.md
+
+      # Build image using Buildah action
+      - name: Build Image
+        id: build_image
+        uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2
+        with:
+          containerfiles: |
+            ./ContainerFiles/${{ matrix.containerfile }}
+          image: ${{ matrix.containerfile }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          oci: true
+
+      # Workaround bug where capital letters in your GitHub username make it impossible to push to GHCR.
+      # https://github.com/macbre/push-to-ghcr/issues/12
+      - name: Lowercase Registry
+        id: registry_case
+        uses: ASzc/change-string-case-action@ecd1412d078f2e06e9eedcbaa6fcd988151c3f82 # v8
+        with:
+          string: ${{ env.IMAGE_REGISTRY }}
+
+      # Push the image to GHCR (Image Registry)
+      - name: Push To GHCR
+        uses: redhat-actions/push-to-registry@5ed88d269cf581ea9ef6dd6806d01562096bee9c # v2
+        if: github.event_name != 'pull_request'
+        id: push
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ github.token }}
+        with:
+          image: ${{ steps.build_image.outputs.image }}
+          tags: ${{ steps.build_image.outputs.tags }}
+          registry: ${{ steps.registry_case.outputs.lowercase }}
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Sign container
+      - name: Sign container image
+        if: github.event_name != 'pull_request'
+        run: |
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.containerfile }}@${DIGEST}
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PASSWORD: ""
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+
+      # Catch a signing secret that doesn't match the committed cosign.pub
+      - name: Verify signature
+        if: github.event_name != 'pull_request'
+        run: |
+          cosign verify --key cosign.pub ${{ steps.registry_case.outputs.lowercase }}/${{ matrix.containerfile }}@${DIGEST} > /dev/null
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Echo outputs
+        if: github.event_name != 'pull_request'
+        env:
+          PUSH_OUTPUTS: ${{ toJSON(steps.push.outputs) }}
+        run: |
+          echo "$PUSH_OUTPUTS"

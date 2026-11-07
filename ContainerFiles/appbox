@@ -1,0 +1,18 @@
+# ghcr.io/ublue-os/ubuntu-toolbox only publishes :latest. UBUNTU_VERSION is the
+# guard: the build fails if :latest moves to a different Ubuntu release, so an
+# EOL upgrade is a deliberate one-line change here, not a surprise.
+FROM ghcr.io/ublue-os/ubuntu-toolbox:latest
+
+ARG UBUNTU_VERSION=26.04
+
+LABEL com.github.containers.toolbox="true" \
+      usage="This image is meant to be used with the toolbox or distrobox command" \
+      summary="Ubuntu LTS distrobox for desktop apps (Signal, Claude Desktop)" \
+      maintainer="Danathar"
+
+COPY scripts/appbox.sh /tmp/appbox/
+COPY scripts/claude-desktop-sync /tmp/appbox/
+COPY packages/appbox.packages /tmp/appbox/
+
+RUN UBUNTU_VERSION="${UBUNTU_VERSION}" bash /tmp/appbox/appbox.sh && \
+    rm -rf /tmp/appbox

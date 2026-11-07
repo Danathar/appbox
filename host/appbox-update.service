@@ -1,0 +1,11 @@
+[Unit]
+Description=Recreate the appbox distrobox from the latest signed image
+Documentation=https://github.com/Danathar/appbox
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Points at the repo checkout so `git pull` updates the script and distrobox.ini.
+ExecStart=%h/claude/appbox/host/appbox-update
+TimeoutStartSec=1h

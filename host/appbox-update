@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Recreate the appbox distrobox from the latest signed image.
+#
+# Run daily by appbox-update.timer. Recreates only when the box is at least
+# APPBOX_MAX_AGE_DAYS old, and never while Signal or Claude Desktop is running
+# in it, so a skipped day is retried the next day instead of waiting a week.
+#
+# Usage: appbox-update [--force]   (--force ignores the age check, not the
+#                                   running-app check)
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+ini="${APPBOX_INI:-${repo_dir}/distrobox.ini}"
+pubkey="${APPBOX_PUBKEY:-${repo_dir}/cosign.pub}"
+max_age_days="${APPBOX_MAX_AGE_DAYS:-7}"
+force=0
+[ "${1:-}" = "--force" ] && force=1
+
+box="$(sed -n 's/^\[\(.*\)\]$/\1/p' "${ini}" | head -n 1)"
+image="$(sed -n 's/^image=//p' "${ini}" | head -n 1)"
+
+cosign="$(command -v cosign || true)"
+[ -n "${cosign}" ] || cosign=/home/linuxbrew/.linuxbrew/bin/cosign
+
+# distrobox boxes share the host PID namespace, so pgrep alone also sees apps
+# running in other boxes. A process belongs to this box if it shares the
+# mount namespace of the box's init process.
+app_running_in_box() {
+    local box_pid box_ns pid
+    box_pid="$(podman inspect -f '{{.State.Pid}}' "${box}")"
+    [ "${box_pid}" -gt 0 ] || return 1 # box is stopped
+    box_ns="$(readlink "/proc/${box_pid}/ns/mnt")"
+    for pid in $(pgrep -x 'claude-desktop|signal-desktop'); do
+        if [ "$(readlink "/proc/${pid}/ns/mnt" 2> /dev/null)" = "${box_ns}" ]; then
+            echo "$(cat "/proc/${pid}/comm" 2> /dev/null) (pid ${pid})"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! podman container exists "${box}"; then
+    echo "Box '${box}' does not exist; create it once with:"
+    echo "  distrobox assemble create --file ${ini}"
+    exit 0
+fi
+
+created="$(podman inspect -f '{{.Created.Unix}}' "${box}")"
+age_days=$((($(date +%s) - created) / 86400))
+if [ "${force}" -eq 0 ] && [ "${age_days}" -lt "${max_age_days}" ]; then
+    echo "Box '${box}' is ${age_days} day(s) old (< ${max_age_days}); nothing to do."
+    exit 0
+fi
+
+if running="$(app_running_in_box)"; then
+    echo "Skipping recreate: ${running} is running in '${box}'. Will retry next run."
+    exit 0
+fi
+
+# Pull and verify before touching the box: `assemble --replace` deletes the
+# old box first, so a failed pull there would leave no box at all.
+echo "Pulling ${image}"
+podman pull "${image}"
+digest="$(podman image inspect -f '{{.Digest}}' "${image}")"
+echo "Verifying signature of ${image%:*}@${digest}"
+"${cosign}" verify --key "${pubkey}" "${image%:*}@${digest}" > /dev/null
+
+# Check again: the pull can take a while.
+if running="$(app_running_in_box)"; then
+    echo "Skipping recreate: ${running} started in '${box}' during the pull."
+    exit 0
+fi
+
+echo "Recreating '${box}' (was ${age_days} day(s) old)"
+distrobox assemble create --replace --file "${ini}"
