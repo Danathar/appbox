@@ -39,9 +39,16 @@
  *                   label and unlabel events, not from the current labels, so
  *                   removing the label after the merge does not hide it.
  *
+ * Audit floor: rules can only be audited from the time they applied. appbox
+ * had no DCO or hive rules before this audit was added, so the workflow
+ * passes --floor, the commit time of the first commit on main that added
+ * .github/workflows/agent-audit.yml. Pull requests merged before the floor are
+ * left out, and the report says when the floor cut the window. A deliberate
+ * look back (workflow_dispatch with an explicit `since`) runs without a floor.
+ *
  * Usage:
  *   node scripts/ai-audit-report.mjs --repo Danathar/appbox --since YYYY-MM-DD
- *        [--output report.md]
+ *        [--floor <ISO 8601 time>] [--output report.md]
  * Reads GitHub through the `gh` CLI (GH_TOKEN in the environment).
  *
  * Exit codes: 0 no findings (including "no agent pull requests in the
@@ -214,8 +221,18 @@ function paged(gh, path, pick, cap = Infinity) {
     }
 }
 
+/**
+ * True when a pull request merged inside the window: on or after `since`
+ * (a date) and, when a floor is given, at or after the floor (a time).
+ */
+export function inWindow(pr, since, floor = null) {
+    const mergedAt = pr?.mergedAt ?? '';
+    if (mergedAt.slice(0, 10) < since) return false;
+    return floor === null || Date.parse(mergedAt) >= Date.parse(floor);
+}
+
 /** Fetches everything the audit needs. All GitHub access goes through `gh`. */
-export function collect(gh, repo, since) {
+export function collect(gh, repo, since, floor = null) {
     const prs = gh([
         'pr', 'list', '--repo', repo, '--state', 'merged',
         '--limit', String(PR_LIST_LIMIT), '--search', `merged:>=${since}`,
@@ -235,7 +252,7 @@ export function collect(gh, repo, since) {
     const required = requiredFromRules(rules, created);
     const details = {};
     for (const pr of prs) {
-        if (!classify(pr) || (pr.mergedAt ?? '').slice(0, 10) < since) continue;
+        if (!classify(pr) || !inWindow(pr, since, floor)) continue;
         const sha = pr.headRefOid;
         details[pr.number] = {
             commits: paged(gh, `repos/${repo}/pulls/${pr.number}/commits`, (x) => x, COMMIT_CAP),
@@ -247,10 +264,11 @@ export function collect(gh, repo, since) {
     return { prs, required, details };
 }
 
-export function buildReport({ prs, required, details }, since) {
-    const inWindow = prs.filter((pr) => (pr.mergedAt ?? '').slice(0, 10) >= since);
+export function buildReport({ prs, required, details }, since, floor = null) {
+    const afterSince = prs.filter((pr) => inWindow(pr, since));
+    const audited = afterSince.filter((pr) => inWindow(pr, since, floor));
     const rows = [];
-    for (const pr of inWindow) {
+    for (const pr of audited) {
         const kind = classify(pr);
         if (!kind) continue;
         rows.push({
@@ -266,7 +284,10 @@ export function buildReport({ prs, required, details }, since) {
     }
     return {
         since,
-        total: inWindow.length,
+        floor,
+        floorCut: floor !== null && Date.parse(floor) > Date.parse(`${since}T00:00:00Z`),
+        beforeFloor: afterSince.length - audited.length,
+        total: audited.length,
         rows,
         required,
         findingCount: rows.reduce((n, r) => n + r.findings.length, 0),
@@ -282,6 +303,12 @@ export function renderMarkdown(report) {
         `${report.total} pull request(s) merged in the window; ${report.rows.length} written by an agent and audited.`,
         '',
     ];
+    if (report.floorCut) {
+        out.push(
+            `**The audit floor cut the window.** This audit started applying at ${report.floor} (the first commit on \`main\` that added \`.github/workflows/agent-audit.yml\`), which is later than ${report.since}, so the window starts there. ${report.beforeFloor} pull request(s) merged after ${report.since} but before the floor were not audited. Run the workflow by hand with an explicit \`since\` to look further back.`,
+            ''
+        );
+    }
     if (report.required.length === 0) {
         out.push('No required status checks are configured on `main`, so the required-check rule was skipped.', '');
     } else {
@@ -325,15 +352,17 @@ export function isRealDate(value) {
 }
 
 export function parseArgs(argv) {
-    const opts = { repo: null, since: null, output: null };
+    const opts = { repo: null, since: null, floor: null, output: null };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
-        if (!['--repo', '--since', '--output'].includes(a)) throw new Error(`unknown argument ${a}`);
+        if (!['--repo', '--since', '--floor', '--output'].includes(a)) throw new Error(`unknown argument ${a}`);
         if (i + 1 >= argv.length) throw new Error(`${a} needs a value`);
         opts[a.slice(2)] = argv[++i];
     }
     if (!opts.repo || !/^[\w.-]+\/[\w.-]+$/.test(opts.repo)) throw new Error('--repo owner/name is required');
     if (!opts.since || !isRealDate(opts.since)) throw new Error('--since must be a real date, YYYY-MM-DD');
+    if (opts.floor !== null && !/^\d{4}-\d{2}-\d{2}T/.test(opts.floor)) throw new Error('--floor must be an ISO 8601 time');
+    if (opts.floor !== null && Number.isNaN(Date.parse(opts.floor))) throw new Error('--floor must be an ISO 8601 time');
     return opts;
 }
 
@@ -343,7 +372,7 @@ export function main(argv, { gh = realGh, write = writeFileSync, stdout = proces
     let opts;
     try {
         opts = parseArgs(argv);
-        report = buildReport(collect(gh, opts.repo, opts.since), opts.since);
+        report = buildReport(collect(gh, opts.repo, opts.since, opts.floor), opts.since, opts.floor);
     } catch (err) {
         stderr.write(`ai-audit-report: ${err.message}\n`);
         return 2;

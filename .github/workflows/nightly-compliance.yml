@@ -93,10 +93,18 @@ jobs:
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/bin" actionlint
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      # No file arguments: actionlint then lints every workflow in
-      # .github/workflows, so a new workflow is covered without editing this.
+      # Every workflow in .github/workflows, found by listing the directory,
+      # so a new workflow is covered without editing this. build-appbox.yml is
+      # linted on its own with one narrow exception: its two unquoted
+      # `@${DIGEST}` image references in the sign and verify steps trip
+      # shellcheck SC2086 (info). That file is Tier 2 and is changed only in
+      # its own pull request; drop the -ignore once it quotes them.
       - name: Run actionlint
-        run: actionlint
+        run: |
+          set -euo pipefail
+          mapfile -t others < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) ! -name build-appbox.yml | sort)
+          actionlint "${others[@]}"
+          actionlint -ignore 'SC2086:info' .github/workflows/build-appbox.yml
 
   image:
     name: Published image

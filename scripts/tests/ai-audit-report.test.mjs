@@ -8,6 +8,7 @@ import {
     classify,
     collect,
     findSignature,
+    inWindow,
     isRealDate,
     labelAtMerge,
     main,
@@ -176,11 +177,14 @@ test('requiredFromRules keeps the earliest ruleset creation time per check', () 
 });
 
 test('parseArgs validates repo and date', () => {
-    assert.deepEqual(parseArgs(['--repo', REPO, '--since', '2026-11-01']), { repo: REPO, since: '2026-11-01', output: null });
+    assert.deepEqual(parseArgs(['--repo', REPO, '--since', '2026-11-01']), { repo: REPO, since: '2026-11-01', floor: null, output: null });
     assert.throws(() => parseArgs(['--repo', REPO, '--since', '2026-02-30']), /real date/);
     assert.throws(() => parseArgs(['--since', '2026-11-01']), /--repo/);
     assert.throws(() => parseArgs(['--repo', REPO, '--since', '2026-11-01', '--bogus', 'x']), /unknown/);
     assert.equal(isRealDate('2026-11-31'), false);
+    assert.equal(parseArgs(['--repo', REPO, '--since', '2026-11-01', '--floor', '2026-11-07T11:34:05-05:00']).floor, '2026-11-07T11:34:05-05:00');
+    assert.throws(() => parseArgs(['--repo', REPO, '--since', '2026-11-01', '--floor', '2026-11-07']), /ISO 8601/);
+    assert.throws(() => parseArgs(['--repo', REPO, '--since', '2026-11-01', '--floor', '2026-13-45Tnope']), /ISO 8601/);
 });
 
 /** A fake `gh` serving fixtures by path, ignoring per_page/page on page 1. */
@@ -277,4 +281,51 @@ test('report cells escape pipes in titles', () => {
         '2026-11-01'
     );
     assert.match(renderMarkdown(report), /a \\\| b/);
+});
+
+// The audit floor: the commit that added agent-audit.yml to main, 16:34 UTC.
+const FLOOR = '2026-11-07T11:34:05-05:00';
+
+test('inWindow compares the floor as a time, not a date', () => {
+    // Merged the same day, 48 minutes before the floor (as PR #13 was).
+    assert.equal(inWindow(pr({ mergedAt: '2026-11-07T15:46:45Z' }), '2026-11-01', FLOOR), false);
+    assert.equal(inWindow(pr({ mergedAt: '2026-11-07T16:34:05Z' }), '2026-11-01', FLOOR), true);
+    assert.equal(inWindow(pr({ mergedAt: '2026-11-07T15:46:45Z' }), '2026-11-01'), true);
+    assert.equal(inWindow(pr({ mergedAt: '2026-10-31T23:00:00Z' }), '2026-11-01'), false);
+});
+
+test('the floor leaves earlier merges out and the report says so', () => {
+    const before = pr({ number: 13, author: { login: 'Danathar' }, body: 'Generated with [Claude Code](x)', mergedAt: '2026-11-07T15:46:45Z' });
+    const after = pr({ number: 20, mergedAt: '2026-11-20T10:00:00Z' });
+    const data = { prs: [before, after], required: REQUIRED, details: { 20: details() } };
+    const report = buildReport(data, '2026-11-01', FLOOR);
+    assert.deepEqual(report.rows.map((r) => r.number), [20]);
+    assert.equal(report.floorCut, true);
+    assert.equal(report.beforeFloor, 1);
+    const md = renderMarkdown(report);
+    assert.match(md, /The audit floor cut the window/);
+    assert.match(md, /1 pull request\(s\) merged after 2026-11-01 but before the floor were not audited/);
+});
+
+test('a floor earlier than since changes nothing and is not mentioned', () => {
+    const report = buildReport({ prs: [pr()], required: REQUIRED, details: { 7: details() } }, '2026-11-15', FLOOR);
+    assert.equal(report.floorCut, false);
+    assert.equal(report.rows.length, 1);
+    assert.doesNotMatch(renderMarkdown(report), /audit floor/);
+});
+
+test('main with --floor does not fetch details for pull requests before the floor', () => {
+    const before = pr({ number: 13, author: { login: 'Danathar' }, body: 'Generated with [Claude Code](x)', mergedAt: '2026-11-07T15:46:45Z' });
+    const { gh, calls } = fakeGh({
+        prs: [before, pr()],
+        rules: testRules,
+        rulesets: { 9: '2026-11-10T00:00:00Z' },
+        perPr: { 7: { sha: HEAD, ...details() } },
+    });
+    const out = [];
+    const io = { stdout: { write: (x) => out.push(x) }, stderr: { write: (x) => out.push(x) } };
+    // Without the floor, #13 (fixture has no commits) would be fetched and fail the fake.
+    assert.equal(main(['--repo', REPO, '--since', '2026-10-07', '--floor', FLOOR], { gh, ...io }), 0);
+    assert.ok(!calls.some((c) => c.includes('/pulls/13/')));
+    assert.match(out.join(''), /The audit floor cut the window/);
 });

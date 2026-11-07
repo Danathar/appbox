@@ -16,6 +16,14 @@ name: Agent audit trail
 #     creation);
 #   - it did not merge while carrying the `hold` label, the owner's brake.
 #
+# Audit floor: appbox had no DCO or hive rules before this audit was added, so
+# auditing older merges would only report rules that did not exist yet. A
+# scheduled run (or a dispatch with `since` left blank) starts its window at
+# the later of 31 days ago and the commit time of the first commit on main
+# that added this file, read from git history (hence fetch-depth: 0), and the
+# summary says when the floor cut the window. A dispatch with an explicit
+# `since` runs without the floor, for a deliberate look back.
+#
 # Failure model: any finding fails the run, and the run summary names each
 # one. .github/workflows/auto-issues.yml turns the failed scheduled run into
 # one tracking issue. This workflow only reads: its token can read pull
@@ -29,7 +37,7 @@ on:
   workflow_dispatch:
     inputs:
       since:
-        description: Audit pull requests merged on or after this date (YYYY-MM-DD). Blank means the last 31 days.
+        description: Audit pull requests merged on or after this date (YYYY-MM-DD), with no audit floor. Blank means the last 31 days, floored at when this audit was added.
         required: false
         default: ''
 
@@ -53,6 +61,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, to find the commit that added this workflow (the audit floor).
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -66,8 +77,16 @@ jobs:
           SINCE: ${{ inputs.since }}
         run: |
           set -euo pipefail
+          floor_args=()
           if [ -z "$SINCE" ]; then
             SINCE="$(date -u -d '31 days ago' +%F)"
+            floor="$(git log --diff-filter=A --format=%cI -- .github/workflows/agent-audit.yml | tail -1)"
+            if [ -z "$floor" ]; then
+              echo "::error::could not find the commit that added .github/workflows/agent-audit.yml; is the checkout shallow?"
+              exit 2
+            fi
+            echo "Audit floor: $floor"
+            floor_args=(--floor "$floor")
           fi
           # The script validates the date as well; this gives a clear error
           # before any API call.
@@ -76,7 +95,7 @@ jobs:
             exit 2
           fi
           status=0
-          node scripts/ai-audit-report.mjs --repo "$REPO" --since "$SINCE" --output report.md || status=$?
+          node scripts/ai-audit-report.mjs --repo "$REPO" --since "$SINCE" "${floor_args[@]}" --output report.md || status=$?
           if [ -f report.md ]; then cat report.md >> "$GITHUB_STEP_SUMMARY"; fi
           case "$status" in
             0) ;;
