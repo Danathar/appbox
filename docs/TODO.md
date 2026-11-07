@@ -5,12 +5,11 @@ order within each section. Tick items off or delete them as they are done.
 
 ## Security
 
-- [ ] **Protect `main`.** Every enrolled machine runs whatever is on `main`
-  (the update script self-updates), so `main` is effectively a remote-code
-  path onto those machines. In Settings > Branches (or a ruleset): block force
-  pushes and branch deletion, and require the `build-appbox` check to pass.
-  Requiring pull requests is stronger, but means no more direct pushes from
-  any machine; decide whether that is worth it.
+- [x] **Protect `main`.** Done 2026-11-07: a ruleset (no bypass, the owner
+  included) blocks force pushes and deletion, requires a pull request, and
+  requires the `test`, `Coverage gate` and `policy-check` checks with `main`
+  up to date. `test` includes an E2E build of the image, so a broken image
+  definition cannot merge. Details: `docs/branch-protection.md`.
 
 - [ ] **Require and verify signed commits.** Branch protection stops other
   people; this stops a stolen GitHub token too. Sign commits (SSH signing is

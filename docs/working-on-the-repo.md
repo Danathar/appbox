@@ -7,21 +7,23 @@ what it finds. There is no staging step.
 
 ## What a push does
 
-| You change | CI rebuilds the image? | Reaches machines |
-| --- | --- | --- |
-| `ContainerFiles/`, `scripts/`, `packages/`, `keys/`, `cosign.pub`, the workflow | Yes, on push (and daily anyway) | New image on each machine's next recreate (weekly by default) |
-| `host/appbox-update` | No | Next timer run, through self-update |
-| `distrobox.ini`, `hosts/*.ini` | No | Next timer run; used at the next recreate |
-| `hosts/<hostname>.env` | No | That machine's next timer run |
-| `host/*.service`, `host/*.timer` | No | **Not until each machine runs `systemctl --user daemon-reload`** (re-running `host/install` does it). Self-update pulls the new file but systemd keeps the old one loaded. |
-| `*.md`, `docs/` | No | Nothing to deploy |
+| You change                                                                                                      | CI rebuilds the image?          | Reaches machines                                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ContainerFiles/`, `scripts/appbox.sh`, `scripts/claude-desktop-sync`, `packages/`, `keys/`, the build workflow | Yes, on push (and daily anyway) | New image on each machine's next recreate (weekly by default)                                                                                                              |
+| `cosign.pub`                                                                                                    | Yes, on push                    | Next timer run, through self-update: `host/appbox-update` verifies the image with the key in its checkout, so a new key must match what CI signs with before it lands      |
+| `host/appbox-update`                                                                                            | No                              | Next timer run, through self-update                                                                                                                                        |
+| `distrobox.ini`, `hosts/*.ini`                                                                                  | No                              | Next timer run; used at the next recreate                                                                                                                                  |
+| `hosts/<hostname>.env`                                                                                          | No                              | That machine's next timer run                                                                                                                                              |
+| `host/*.service`, `host/*.timer`                                                                                | No                              | **Not until each machine runs `systemctl --user daemon-reload`** (re-running `host/install` does it). Self-update pulls the new file but systemd keeps the old one loaded. |
+| `*.md`, `docs/`                                                                                                 | No                              | Nothing to deploy                                                                                                                                                          |
 
 Merging a Renovate PR is a push to `main` too. Renovate is the only dependency bot; its Dependency Dashboard is issue #8.
 
 ## Before you push
 
 - **Shell changes:** run shellcheck on what you touched
-  (`podman run --rm -v "$PWD:/mnt:ro,z" -w /mnt docker.io/koalaman/shellcheck:stable host/appbox-update host/install scripts/*`).
+  (`podman run --rm -v "$PWD:/mnt:ro,z" -w /mnt docker.io/koalaman/shellcheck:stable host/appbox-update host/install scripts/appbox.sh scripts/claude-desktop-sync`).
+  Name the shell files: `scripts/` also holds Node tooling (`*.mjs`).
 - **Settings or ini changes:** run `host/appbox-update --show-config` on the
   affected machine, or with `APPBOX_SELF_UPDATE=0` and the variables set by
   hand, to see what it will use.
@@ -72,15 +74,25 @@ than taking anyone's word for it.
 
 ## Editing on an enrolled machine
 
+`main` only takes pull requests (see
+[`branch-protection.md`](branch-protection.md)), so every change, including a
+new machine's `hosts/<hostname>.md`, goes on a branch:
+`git switch -c <branch>`, commit with `git commit -s`, `git push -u origin <branch>`,
+then `gh pr create -R Danathar/appbox`. It merges once the required checks
+pass.
+
 The checkout the timer uses can also be the one you edit, but:
 
-- **Commit and push promptly.** Uncommitted changes to files that `main` also
-  changed make the nightly pull fail. Local commits that `main` doesn't have
-  make it fail as soon as someone pushes from another machine. Either way
-  the run continues with the local version and logs "Could not update ..." to
+- **Switch back to `main` when you are done.** Self-update runs
+  `git pull --ff-only` on whatever branch is checked out. On your branch the
+  machine follows that branch instead of `main`, and once the branch is
+  deleted after merging, the pull fails. Uncommitted changes to files that
+  `main` also changed make it fail too. Either way the run continues with the
+  local version and logs "Could not update ..." to
   `journalctl --user -u appbox-update`, so the machine silently stops
-  following `main`.
-- **Start with `git pull --rebase`**, and run it again before pushing.
+  following `main`. After your pull request merges,
+  `git switch main && git pull --ff-only` brings the checkout back in line.
+- **Start each branch from a fresh `main`** (`git pull --ff-only` first).
 - **On a machine you mostly develop on,** set `APPBOX_SELF_UPDATE=0` in its
   `hosts/<hostname>.env` and update it by hand with `git pull`.
 
