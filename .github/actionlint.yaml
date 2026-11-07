@@ -1,0 +1,7 @@
+# actionlint 1.7.12 (the newest release, pinned in ci.yml) predates GitHub's
+# ubuntu-26.04 hosted runner and reports the label as unknown. The runner is
+# real: jobs run on it. Declare it here until an actionlint release knows it,
+# then delete this file.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
