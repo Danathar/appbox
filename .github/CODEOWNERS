@@ -1,0 +1,19 @@
+# Default owner for everything.
+* @Danathar
+
+# Tier 2 paths from docs/risk-tiers.md: anything machines run or the image
+# contains, and the agent boundary. Listed for visibility; the ruleset does
+# not require code-owner review, so this is not a merge gate (see
+# docs/agent-boundaries.md). Keep the list in step with docs/risk-tiers.md.
+/host/                                  @Danathar
+/hosts/                                 @Danathar
+/distrobox.ini                          @Danathar
+/ContainerFiles/                        @Danathar
+/scripts/appbox.sh                      @Danathar
+/scripts/claude-desktop-sync            @Danathar
+/packages/                              @Danathar
+/keys/                                  @Danathar
+/cosign.pub                             @Danathar
+/.github/workflows/build-appbox.yml     @Danathar
+/.claude/settings.json                  @Danathar
+/.claude/hooks/                         @Danathar

@@ -1,0 +1,24 @@
+{
+    "$comment": "Workflow hygiene for .github/workflows. Evaluated by scripts/check-policies.mjs; explained in policies/README.md and docs/security/SECURITY-AI.md section 5.",
+    "workflowGlobs": [
+        ".github/workflows/*.yml",
+        ".github/workflows/*.yaml"
+    ],
+    "requireTopLevelPermissions": true,
+    "jobPermissionsSuffice": [
+        {
+            "file": ".github/workflows/build-appbox.yml",
+            "reason": "Predates the policy and has no top-level permissions block. Its one job declares contents: read, packages: write, id-token: write, so the token is already scoped. Accepted only while every job in the file declares its own permissions; adding top-level permissions: {} is a Tier 2 follow-up (docs/TODO.md style), after which this entry should be removed."
+        }
+    ],
+    "trustedActionOwners": [],
+    "pinPattern": "^[0-9a-f]{40}$",
+    "requireVersionComment": true,
+    "pullRequestTargetForbidden": [
+        "github\\.event\\.pull_request\\.head\\.(?:sha|ref|repo)",
+        "github\\.head_ref",
+        "refs/pull/",
+        "github\\.event\\.pull_request\\.merge_commit_sha"
+    ],
+    "forbiddenRunExpressions": "\\bgithub\\.event\\.(?!(?:number|action|issue\\.number|pull_request\\.(?:number|head\\.sha|base\\.sha)|repository\\.(?:name|full_name|default_branch))(?![\\w.]))|\\bgithub\\.head_ref\\b|\\bgithub\\.ref_name\\b|\\binputs\\."
+}

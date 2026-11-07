@@ -15,6 +15,11 @@ Before starting, read:
 
 ## Ground rules
 
+- Start Claude Code for this work as `APPBOX_OWNER_SESSION=1 claude` from the
+  checkout. The repo's guard hook refuses the machine-setup commands below
+  (creating the box, `host/install`, running the update script) in any other
+  session; see "The Bash guard" in [`AGENTS.md`](../AGENTS.md).
+
 - Ask the owner before anything destructive: removing or replacing boxes,
   deleting data or launchers, changing other timers or services.
 - If a box named `apps` already exists, stop and ask.

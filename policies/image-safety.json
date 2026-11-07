@@ -1,0 +1,102 @@
+{
+    "$comment": "Guards the Tier 2 invariants of the image and the host updater. Evaluated by scripts/check-policies.mjs; explained in policies/README.md and docs/security/SECURITY-AI.md section 1. These are line-based checks of presence and order, not proof of correctness.",
+    "proprietaryPackages": [
+        "claude-desktop"
+    ],
+    "packageLists": [
+        "packages/appbox.packages"
+    ],
+    "imageBuildFiles": [
+        "scripts/appbox.sh",
+        "ContainerFiles/appbox"
+    ],
+    "installPattern": "\\b(?:apt-get|apt|aptitude)\\s+(?:\\S+\\s+)*?(?:install|reinstall)\\b|\\bdpkg\\s+(?:\\S+\\s+)*?(?:-i|--install)\\b",
+    "simulatePattern": "\\s(?:-s|--simulate|--just-print|--dry-run|--recon|--no-act)(?=\\s|$)",
+    "forbiddenOptions": {
+        "files": [
+            "scripts/appbox.sh",
+            "scripts/claude-desktop-sync",
+            "ContainerFiles/appbox",
+            "host/appbox-update",
+            "host/install",
+            ".github/workflows/build-appbox.yml"
+        ],
+        "patterns": [
+            "\\btrusted=yes\\b",
+            "--allow-unauthenticated",
+            "AllowInsecureRepositories",
+            "--allow-insecure-repositories",
+            "--insecure",
+            "--allow-insecure-registry",
+            "--tls-verify=false",
+            "--no-check-certificate",
+            "\\bcurl\\b[^\\n]*\\s-[a-zA-Z]*k\\b"
+        ]
+    },
+    "requiredSequences": [
+        {
+            "name": "build-signing",
+            "file": ".github/workflows/build-appbox.yml",
+            "steps": [
+                { "pattern": "cosign verify --key keys/ublue-os-toolboxes\\.pub", "why": "the check of ublue's signature on the base image" },
+                { "pattern": "redhat-actions/buildah-build@|\\bbuildah (?:bud|build)\\b|\\bpodman build\\b", "why": "the image build" },
+                { "pattern": "redhat-actions/push-to-registry@|\\b(?:buildah|podman) push\\b", "why": "the push to ghcr.io" },
+                { "pattern": "\\bcosign sign\\b", "why": "signing the pushed digest" },
+                { "pattern": "cosign verify --key cosign\\.pub", "why": "verifying the new signature against the committed cosign.pub" }
+            ]
+        },
+        {
+            "name": "image-no-proprietary",
+            "file": "scripts/appbox.sh",
+            "steps": [
+                { "pattern": "\\bapt-get\\b.*\\binstall\\b", "last": true, "why": "the last package install" },
+                { "pattern": "dpkg-query[^\\n]*claude-desktop", "why": "the check that fails the build if claude-desktop ended up installed" },
+                { "pattern": "\\bexit 1\\b", "why": "the build failing on that check" }
+            ]
+        },
+        {
+            "name": "host-rebuild",
+            "file": "host/appbox-update",
+            "steps": [
+                { "pattern": "\\bpodman pull\\b", "why": "pulling the image" },
+                { "pattern": "\\bverify --key\\b", "why": "cosign verification of the pulled digest" },
+                { "pattern": "\\bapp_running_in_box\\b", "why": "the second is-an-app-open check after the pull" },
+                { "pattern": "image=\\$\\{pinned\\}", "why": "recreating from the verified digest" },
+                { "pattern": "pull=false", "why": "no second pull after verification" },
+                { "pattern": "assemble create --replace", "why": "the recreate itself" }
+            ]
+        },
+        {
+            "name": "host-main",
+            "file": "host/appbox-update",
+            "steps": [
+                { "pattern": "podman container exists", "why": "the start of the main flow" },
+                { "pattern": "\\bapp_running_in_box\\b", "why": "the is-an-app-open check before a rebuild" },
+                { "pattern": "^\\s*rebuild_box\\s*$", "why": "the rebuild call" }
+            ]
+        },
+        {
+            "name": "host-upgrade",
+            "file": "host/appbox-update",
+            "steps": [
+                { "pattern": "app_running_in_box \"\\$\\{pkg\\}\"", "why": "the per-app is-it-open check" },
+                { "pattern": "--only-upgrade", "why": "the in-place upgrade of a closed app" }
+            ]
+        }
+    ],
+    "initHooks": [
+        {
+            "file": "scripts/claude-desktop-sync",
+            "forbiddenPattern": "\\b(?:upgrade|dist-upgrade|full-upgrade)\\b|--only-upgrade",
+            "lastCommand": "exit 0",
+            "forbiddenShellOptions": [
+                "^\\s*set\\s+-[a-zA-Z]*e",
+                "^\\s*set\\s+-o\\s+errexit"
+            ]
+        }
+    ],
+    "publicKeys": [
+        { "file": "cosign.pub", "mustContain": "-----BEGIN PUBLIC KEY-----" },
+        { "file": "keys/ublue-os-toolboxes.pub", "mustContain": "-----BEGIN PUBLIC KEY-----" }
+    ]
+}
