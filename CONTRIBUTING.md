@@ -4,7 +4,7 @@ Thanks for helping. appbox is a CI-built distrobox image
 (`ghcr.io/danathar/appbox`, with Signal baked in and Claude Desktop installed
 at box start) plus `host/appbox-update`, the systemd user timer that keeps each
 machine's `apps` box current. See [README.md](README.md) for how it works.
-Contributions are licensed Apache-2.0, like the rest of the repo.
+Contributions are licensed GPL-3.0-only, like the rest of the repo (see the License section of the README).
 
 The most important thing to know before changing anything: **`main` is live.**
 Every enrolled machine fast-forwards its checkout to `main` on its next timer
