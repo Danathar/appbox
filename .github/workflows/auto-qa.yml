@@ -36,7 +36,7 @@ permissions: {}
 jobs:
   measure:
     name: Measure and propose
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: '26'
 
       - name: Propose tuning
         id: tune
@@ -73,7 +73,7 @@ jobs:
   report:
     name: Open, update or close the tracking issue
     needs: measure
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       issues: write
