@@ -21,7 +21,8 @@ which already carries the distrobox host-integration pieces.
 | `packages/appbox.packages` | Extra Ubuntu packages to bake in, one per line. |
 | `keys/ublue-os-toolboxes.pub` | ublue's public key; CI refuses to build on an unsigned base. |
 | `distrobox.ini` | Box definition for `distrobox assemble`, including exported launchers. |
-| `host/` | systemd user timer and script that recreate the box from the fresh image. |
+| `host/` | The update script, its systemd user service and timer, and `host/install` to set them up. Shared by every machine. |
+| `hosts/` | One `<hostname>.env` (settings) and `<hostname>.md` (setup record) per machine, plus `example.env` as the template. |
 
 ## What is baked in vs installed at box start
 
@@ -61,43 +62,75 @@ box.
 ### Automatic recreate
 
 ```sh
-mkdir -p ~/.config/systemd/user
-ln -sf ~/claude/appbox/host/appbox-update.service ~/.config/systemd/user/
-ln -sf ~/claude/appbox/host/appbox-update.timer ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now appbox-update.timer
+~/claude/appbox/host/install
 ```
+
+That symlinks `host/appbox-update.{service,timer}` into
+`~/.config/systemd/user/`, enables the timer, and prints the settings this
+machine will use. It is safe to re-run. The service runs from
+`~/claude/appbox` by default; if the checkout lives elsewhere, `host/install`
+adds a systemd drop-in pointing at it.
 
 The timer fires daily at 04:30 (after Aurora's own 04:00 `uupd` run). On a
 laptop that is asleep at that hour, it fires as soon as the lid opens. Each run
 of `host/appbox-update`:
 
-1. Does nothing unless the box is at least 7 days old (so recreates are
+1. Fast-forwards the repo checkout (`git pull --ff-only`) and, if that
+   brought in changes, re-runs the new version of itself. See
+   [Managing machines centrally](#managing-machines-centrally).
+2. Does nothing unless the box is at least 7 days old (so recreates are
    weekly, and a skipped day is retried the next day).
-2. Skips if Signal or Claude Desktop is running in the box, so an open
-   session is never killed. If the box reaches 14 days old because the apps
-   never quit (an always-on desktop), it sends a desktop notification asking
-   you to quit them and run the update.
-3. Waits up to 2 minutes for the network (it is often still coming up right
+3. Skips if Signal or Claude Desktop is running in the box, so an open
+   session is never killed. If the box reaches twice its maximum age (14
+   days by default) because the apps never quit (an always-on desktop), it
+   sends a desktop notification asking you to quit them and run the update.
+4. Waits up to 2 minutes for the network (it is often still coming up right
    after resume). If the network or pull fails, the service retries every
    2 minutes, up to 5 times an hour, like `uupd`.
-4. Pulls and verifies the image signature, then recreates the box from that
+5. Pulls and verifies the image signature, then recreates the box from that
    exact verified digest with `pull=false`. Nothing touches the network after
    the old box is deleted except the Claude Desktop install, and if that
    fails, the script retries it and re-exports the launcher.
-5. Shows a notification while the box is rebuilt (about a minute; launchers
+6. Shows a notification while the box is rebuilt (about a minute; launchers
    do not work during that window) and when it is done, then deletes the
-   previous image.
+   previous image. The box is left stopped afterwards; the next launch starts
+   it in about a second.
 
-The service expects the checkout at `~/claude/appbox`; edit `ExecStart` if
-yours lives elsewhere. `cosign` is looked up on `PATH`, then at Homebrew's
+`cosign` is looked up on `PATH`, then at Homebrew's
 `/home/linuxbrew/.linuxbrew/bin/cosign`.
 
 Run it by hand with `systemctl --user start appbox-update`, or
 `host/appbox-update --force` to skip the age check (the running-app check
-still applies). Logs: `journalctl --user -u appbox-update`.
+still applies). `host/appbox-update --show-config` prints the settings in
+effect without changing anything. Logs: `journalctl --user -u appbox-update`.
 
-Per-host setup records live in [`docs/hosts/`](docs/hosts/).
+## Managing machines centrally
+
+Everything a machine runs comes from this repo, so changes are made here and
+pushed, not on the machines:
+
+- **The image** is rebuilt daily by CI and picked up by each machine's next
+  recreate.
+- **The update script, units, and `distrobox.ini`** reach each machine on its
+  next timer run, because the script fast-forwards its checkout first.
+  A pull that fails (offline, local edits, diverged history) is logged and the
+  run continues with what is checked out. Unit file changes take effect after
+  `systemctl --user daemon-reload` (re-run `host/install`).
+- **Per-machine settings** live in `hosts/<hostname>.env`, where `<hostname>`
+  is `hostname -s`. Copy `hosts/example.env` to start one. Supported keys:
+  `APPBOX_MAX_AGE_DAYS`, `APPBOX_INI` (to give a machine its own ini, for
+  example `hosts/<hostname>.ini` with extra apps), and `APPBOX_SELF_UPDATE`
+  (set `0` on a checkout you develop in). The file is parsed as plain
+  `KEY=VALUE`, never executed. A machine without a file uses the defaults.
+- **Setup records** live next to the settings, in `hosts/<hostname>.md`: what
+  the machine is, what was migrated, and anything specific to it.
+
+Trust tradeoff: the image is signature-checked before use, but the script is
+not. Each machine runs whatever is on `main` of this repo, so anyone who can
+push to `main` can run code on every enrolled machine as your user. Keep `main`
+protected accordingly.
+
+Machines so far: [`aurora-think`](hosts/aurora-think.md) (laptop).
 
 ## Adding an app
 

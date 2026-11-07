@@ -8,7 +8,8 @@ StartLimitBurst=5
 
 [Service]
 Type=oneshot
-# Points at the repo checkout so `git pull` updates the script and distrobox.ini.
+# Runs from the repo checkout; the script fast-forwards it on every run.
+# host/install adds a drop-in if the checkout lives somewhere else.
 ExecStart=%h/claude/appbox/host/appbox-update
 Restart=on-failure
 RestartSec=2min

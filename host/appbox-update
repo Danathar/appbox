@@ -6,14 +6,68 @@
 # APPBOX_MAX_AGE_DAYS old, and never while Signal or Claude Desktop is running
 # in it, so a skipped day is retried the next day instead of waiting a week.
 #
-# Usage: appbox-update [--force]   (--force ignores the age check, not the
-#                                   running-app check)
+# Each run first fast-forwards the repo checkout this script lives in, so
+# changes pushed to the repo (this script, distrobox.ini, hosts/*.env) reach
+# every machine on its next run. Per-machine settings come from
+# hosts/<short hostname>.env in the repo; see hosts/example.env.
+#
+# Usage: appbox-update [--force]        --force ignores the age check, not the
+#                                       running-app check
+#        appbox-update --show-config    print the effective settings and exit
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
-ini="${APPBOX_INI:-${repo_dir}/distrobox.ini}"
+host="$(hostname -s)"
+host_env="${repo_dir}/hosts/${host}.env"
+
+# Read KEY=VALUE settings for this machine. Only known keys are accepted, and
+# a variable already set in the environment (e.g. a systemd drop-in) wins.
+load_host_config() {
+    local key value
+    [ -f "${host_env}" ] || return 0
+    while IFS='=' read -r key value || [ -n "${key}" ]; do
+        case "${key}" in
+            '' | '#'*) ;;
+            APPBOX_MAX_AGE_DAYS | APPBOX_INI | APPBOX_SELF_UPDATE)
+                [ -n "${!key+x}" ] || printf -v "${key}" '%s' "${value}"
+                ;;
+            *) echo "Ignoring unknown setting '${key}' in ${host_env}" >&2 ;;
+        esac
+    done < "${host_env}"
+}
+load_host_config
+
+# Fast-forward the checkout, then re-run the (possibly new) script once. A
+# failed pull (offline, local edits, diverged branch) is not fatal: the run
+# continues with what is checked out.
+if [ "${APPBOX_SELF_UPDATE:-1}" = "1" ] && [ -z "${APPBOX_REEXECED:-}" ] &&
+    [ "${1:-}" != "--show-config" ]; then
+    before="$(git -C "${repo_dir}" rev-parse HEAD)"
+    if GIT_TERMINAL_PROMPT=0 timeout 60 git -C "${repo_dir}" pull --ff-only --quiet; then
+        after="$(git -C "${repo_dir}" rev-parse HEAD)"
+        if [ "${before}" != "${after}" ]; then
+            echo "Updated checkout ${before:0:7}..${after:0:7}; re-running"
+            APPBOX_REEXECED=1 exec "${repo_dir}/host/appbox-update" "$@"
+        fi
+    else
+        echo "Could not update ${repo_dir}; continuing with $(git -C "${repo_dir}" rev-parse --short HEAD)" >&2
+    fi
+fi
+
+ini="${APPBOX_INI:-distrobox.ini}"
+case "${ini}" in /*) ;; *) ini="${repo_dir}/${ini}" ;; esac
+if [ ! -f "${ini}" ]; then
+    echo "distrobox ini not found: ${ini} (check APPBOX_INI in ${host_env})" >&2
+    exit 1
+fi
 pubkey="${APPBOX_PUBKEY:-${repo_dir}/cosign.pub}"
 max_age_days="${APPBOX_MAX_AGE_DAYS:-7}"
+case "${max_age_days}" in
+    '' | *[!0-9]*)
+        echo "APPBOX_MAX_AGE_DAYS must be a whole number, got '${max_age_days}'" >&2
+        exit 1
+        ;;
+esac
 force=0
 [ "${1:-}" = "--force" ] && force=1
 
@@ -23,6 +77,23 @@ exported_apps="$(sed -n 's/^exported_apps=//p' "${ini}")"
 
 cosign="$(command -v cosign || true)"
 [ -n "${cosign}" ] || cosign=/home/linuxbrew/.linuxbrew/bin/cosign
+
+if [ "${1:-}" = "--show-config" ]; then
+    if [ -f "${host_env}" ]; then host_settings="${host_env}"; else host_settings="none (defaults)"; fi
+    cat << EOF
+host:           ${host}
+host settings:  ${host_settings}
+checkout:       ${repo_dir} @ $(git -C "${repo_dir}" rev-parse --short HEAD)
+self-update:    $([ "${APPBOX_SELF_UPDATE:-1}" = "1" ] && echo on || echo off)
+ini:            ${ini}
+box:            ${box}
+image:          ${image}
+max age (days): ${max_age_days}
+public key:     ${pubkey}
+cosign:         ${cosign}
+EOF
+    exit 0
+fi
 
 notify() {
     notify-send -a appbox -i system-software-update "$@" 2> /dev/null || true

@@ -19,10 +19,16 @@ Danathar.
   baked in, Claude Desktop installed at box start by an init hook because it
   is proprietary and must not be baked into the public image.
 - Read these first, fully, before doing anything:
-  - `README.md`: how the repo, image, `distrobox.ini`, and timer work.
-  - `docs/hosts/aurora-think.md`: exactly what was done on the laptop,
+  - `README.md`: how the repo, image, `distrobox.ini`, and timer work, and
+    especially "Managing machines centrally".
+  - `hosts/aurora-think.md`: exactly what was done on the laptop,
     including the lessons-learned list. Reuse what it learned; don't
     rediscover it.
+  - `hosts/example.env`: the per-machine settings template.
+- Machines are managed centrally from the repo: each one's update script
+  fast-forwards its checkout on every run, and reads its settings from
+  `hosts/<hostname -s>.env`. Anything you push to `main` reaches the laptop
+  on its next timer run, so keep `main` working.
 - The laptop's `apps` box is the reference: one box named `apps`, normal
   `$HOME`, app data in `~/.config/<App>`, launchers exported as
   `apps-*.desktop`, and the `appbox-update` timer.
@@ -68,10 +74,15 @@ Danathar.
    `cosign verify --key cosign.pub ghcr.io/danathar/appbox:latest`. Keep
    `distrobox.ini` GPU-neutral (Mesa in the image covers AMD and Intel; only
    NVIDIA needs `nvidia=true`). The laptop pulls the same image and ini, so
-   don't add anything that only works on this machine. Commit prose without
-   em dashes.
+   don't put anything that only suits this machine in the shared
+   `distrobox.ini`. If this machine needs different apps, give it its own
+   `hosts/<hostname>.ini` and point `APPBOX_INI` at it in
+   `hosts/<hostname>.env`. Apps added to the image itself are fine to share;
+   they just aren't exported on machines whose ini doesn't list them. Commit
+   prose without em dashes.
 
-4. **Create the box.** `distrobox assemble create --file ~/claude/appbox/distrobox.ini`.
+4. **Create the box.** `distrobox assemble create --file ~/claude/appbox/distrobox.ini`
+   (or this machine's own ini, if step 3 gave it one).
    Don't launch any app from it yet. Launching Signal before its data is in
    place creates a fresh, unlinked profile.
 
@@ -97,30 +108,30 @@ Danathar.
    dummy process named via `prctl(PR_SET_NAME)`, as described in the laptop
    record.
 
-7. **Install the timer** (only after step 6 passes):
-   ```sh
-   mkdir -p ~/.config/systemd/user
-   ln -sf ~/claude/appbox/host/appbox-update.service ~/.config/systemd/user/
-   ln -sf ~/claude/appbox/host/appbox-update.timer ~/.config/systemd/user/
-   systemctl --user daemon-reload
-   systemctl --user enable --now appbox-update.timer
-   systemctl --user list-timers
-   ```
+7. **Install the timer** (only after step 6 passes): run
+   `~/claude/appbox/host/install`. It symlinks the units, enables the timer,
+   and prints the effective settings (`--show-config`). Check they are what
+   you expect for this machine.
    Then run the full path once under systemd, since that is how it runs
    unattended (different PATH, no terminal):
    `systemd-run --user --wait --collect ~/claude/appbox/host/appbox-update --force`.
 
 8. **Always-on caveat.** This machine is on all the time, so the timer fires
    at 04:30 every night. If Signal is always open, every run skips. The script
-   sends a desktop notification once the box is 14 days old, asking me to quit
-   the apps and run `systemctl --user start appbox-update`. Tell me plainly
-   whether that will be the normal case here, and suggest options (for
-   example, quitting Signal at night) without changing the design yourself.
+   sends a desktop notification once the box is twice its maximum age (14
+   days by default), asking me to quit the apps and run
+   `systemctl --user start appbox-update`. Tell me plainly whether that will
+   be the normal case here, and suggest options (for example, quitting Signal
+   at night, or a different `APPBOX_MAX_AGE_DAYS` in this machine's
+   `hosts/<hostname>.env`) without changing the design yourself.
 
-9. **Write `docs/hosts/<hostname>.md`** in the repo, in the same shape as
-   `docs/hosts/aurora-think.md`: host facts, what was there before, what was
-   done, current configuration, leftovers kept on purpose, and anything new
-   learned. Commit and push it.
+9. **Record the machine in the repo.** Write `hosts/<hostname>.md`, in the
+   same shape as `hosts/aurora-think.md`: host facts, what was there before,
+   what was done, current configuration, leftovers kept on purpose, and
+   anything new learned. Add `hosts/<hostname>.env` (start from
+   `hosts/example.env`; list the settings even if they are defaults, so the
+   machine's configuration is visible), and add the machine to the
+   "Machines so far" line in `README.md`. Commit and push.
 
 ## Ground rules
 

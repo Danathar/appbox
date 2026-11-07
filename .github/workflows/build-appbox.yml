@@ -11,6 +11,8 @@ on:
       - '**.md'
       - 'distrobox.ini'
       - 'host/**'
+      - 'hosts/**'
+      - 'docs/**'
   schedule:
     - cron: '17 5 * * *' # daily, picks up Ubuntu and Signal updates
 

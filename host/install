@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Install the appbox update timer for the current user, pointed at this
+# checkout. Safe to re-run.
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
+dropin_dir="${unit_dir}/appbox-update.service.d"
+
+mkdir -p "${unit_dir}"
+ln -sf "${repo_dir}/host/appbox-update.service" "${repo_dir}/host/appbox-update.timer" "${unit_dir}/"
+
+# The service runs %h/claude/appbox by default. Point it at this checkout if
+# it lives somewhere else.
+if [ "${repo_dir}" != "$(readlink -f "${HOME}/claude/appbox" 2> /dev/null)" ]; then
+    mkdir -p "${dropin_dir}"
+    printf '[Service]\nExecStart=\nExecStart=%s/host/appbox-update\n' "${repo_dir}" \
+        > "${dropin_dir}/checkout.conf"
+    echo "Checkout is not ~/claude/appbox; wrote ${dropin_dir}/checkout.conf"
+else
+    rm -f "${dropin_dir}/checkout.conf"
+fi
+
+systemctl --user daemon-reload
+systemctl --user enable --now appbox-update.timer
+
+host="$(hostname -s)"
+if [ ! -f "${repo_dir}/hosts/${host}.env" ]; then
+    echo "No hosts/${host}.env in the repo; this machine uses the defaults."
+    echo "To change them, copy hosts/example.env to hosts/${host}.env, edit, commit, and push."
+fi
+echo
+"${repo_dir}/host/appbox-update" --show-config
+echo
+systemctl --user list-timers appbox-update.timer --no-pager

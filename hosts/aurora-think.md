@@ -33,7 +33,7 @@ what was learned along the way.
 
 1. Created `Danathar/appbox` from `ublue-os/boxkit`, removed the template's
    examples, and wrote the image, CI workflow, `distrobox.ini`, and host
-   timer described in the [README](../../README.md).
+   timer described in the [README](../README.md).
 2. Generated a cosign keypair with an empty password in
    `~/.config/appbox-signing/` (directory mode 700, `cosign.key` mode 600).
    The private key went into the `SIGNING_SECRET` repo secret; `cosign.pub`
@@ -54,13 +54,21 @@ what was learned along the way.
    script under systemd).
 7. Installed the timer by symlinking `host/appbox-update.{service,timer}` into
    `~/.config/systemd/user/` and ran `systemctl --user enable --now appbox-update.timer`.
+8. Same day, switched to central management: the script now fast-forwards
+   the checkout on every run and reads this machine's settings from
+   [`hosts/aurora-think.env`](aurora-think.env). Re-ran `host/install`, which
+   now does step 7 and prints the effective settings.
 
 ## Current configuration
 
+Settings: [`hosts/aurora-think.env`](aurora-think.env) (defaults: recreate
+weekly, self-update on). Check what is in effect with
+`~/claude/appbox/host/appbox-update --show-config`.
+
 | Path | What |
 | --- | --- |
-| `~/claude/appbox` | Repo checkout. The service runs `host/appbox-update` from here. |
-| `~/.config/systemd/user/appbox-update.{service,timer}` | Symlinks into the checkout. |
+| `~/claude/appbox` | Repo checkout. The service runs `host/appbox-update` from here, and the script fast-forwards it on every run. This is also where changes are made, so commit and push promptly; uncommitted edits can make the timer's pull fail (it then carries on with the local version). |
+| `~/.config/systemd/user/appbox-update.{service,timer}` | Symlinks into the checkout, made by `host/install`. No drop-in, since the checkout is at the default path. |
 | `~/.config/appbox-signing/cosign.key` | Private signing key. Not in git. Back it up; losing it means generating a new pair and updating `cosign.pub` and `SIGNING_SECRET`. |
 | `~/.config/Signal`, `~/.config/Claude` | Live app data, used by the `apps` box. |
 | `~/.local/share/applications/apps-*.desktop` | Exported launchers ("Signal (on apps)", "Claude (on apps)"). |
