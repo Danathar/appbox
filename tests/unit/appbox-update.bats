@@ -21,20 +21,9 @@ has_config() {
   }
 }
 
-# A run that rebuilt the box should exit 0. host/appbox-update currently
-# exits 1 after every successful rebuild: rebuild_box sets
-# `trap 'rm -f "${tmp_ini}"' EXIT` on a `local` variable, which no longer
-# exists when the trap runs at the script's top-level `exit 0`, so `set -u`
-# fails the trap ("tmp_ini: unbound variable") and the temporary ini is left
-# behind. This accepts exactly that failure and nothing else, so the
-# rebuild tests check everything else now. The skipped test "a successful
-# rebuild exits 0 and removes its temporary ini" is the real expectation:
-# once the script is fixed, unskip it and make this a plain status check.
+# A run that rebuilt the box exits 0.
 assert_rebuild_exit() {
-  [ "$status" -eq 0 ] && return 0
-  [ "$status" -eq 1 ] || return 1
-  [[ "$output" == *"tmp_ini: unbound variable"* ]] || return 1
-  [ "$(grep -c 'unbound variable' <<<"$output")" -eq 1 ]
+  [ "$status" -eq 0 ]
 }
 
 assert_no_rebuild() {
@@ -286,7 +275,6 @@ assert_no_rebuild() {
 }
 
 @test "a successful rebuild exits 0 and removes its temporary ini" {
-  skip "host/appbox-update exits 1 after a rebuild (EXIT trap uses rebuild_box's local tmp_ini); see assert_rebuild_exit"
   box_age_days 7
   run_update
   [ "$status" -eq 0 ]
