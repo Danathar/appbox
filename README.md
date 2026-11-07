@@ -8,7 +8,7 @@
 [![Maintenance assisted by Hivecommons Hive](https://img.shields.io/badge/maintenance%20assisted%20by-Hivecommons%20Hive-1f6feb)](https://github.com/hivecommons/hive)
 [![ACMM L6 Fully Autonomous](https://img.shields.io/badge/ACMM-L6%20Fully%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
 [![AI assisted](https://img.shields.io/badge/AI-assisted-d29922)](#about-this-project)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 > [!NOTE]
 > This was created with AI assistance and should be treated cautiously. The
@@ -296,4 +296,15 @@ Learn more: [Hive](https://github.com/hivecommons/hive) · [Hive Hub](https://hi
 
 ## License
 
-Apache-2.0, see [LICENSE](LICENSE).
+GPL-3.0-only, see [LICENSE](LICENSE): version 3 of the GNU General Public
+License, with no automatic upgrade to later versions.
+
+appbox started from Universal Blue's
+[boxkit](https://github.com/ublue-os/boxkit) template, which is released under
+the Apache License 2.0. The parts carried over from it (the image build
+workflow, which began as boxkit's `build-boxkit.yml`, and the template's
+`.editorconfig`, `renovate.json` and `CODE_OF_CONDUCT.md`) remain available
+under Apache-2.0 as well; its licence text is kept in
+[LICENSE.Apache-2.0](LICENSE.Apache-2.0) as that licence requires. The project
+as a whole, including those parts together with everything added here, is
+distributed under GPL-3.0-only.

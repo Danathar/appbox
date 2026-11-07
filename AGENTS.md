@@ -31,7 +31,7 @@ most of the rules below. [docs/working-on-the-repo.md](docs/working-on-the-repo.
 explains what each kind of change deploys and when; read it before changing
 anything that machines run.
 
-Licence: Apache-2.0. Default branch: `main`. Repository: `Danathar/appbox`.
+Licence: GPL-3.0-only (parts from the boxkit template also Apache-2.0; see README). Default branch: `main`. Repository: `Danathar/appbox`.
 
 ## Where things live
 

@@ -76,8 +76,9 @@ order within each section. Tick items off or delete them as they are done.
   `chunkah` like ublue.
 
 - [ ] **Remove leftover template files.** `CODE_OF_CONDUCT.md` still names
-  ublue's maintainers. `LICENSE` is the template's Apache-2.0; keep it only if
-  that is the license you want.
+  ublue's maintainers. (The licence is settled: GPL-3.0-only since
+  2026-11-07, with the template's Apache-2.0 text kept in
+  `LICENSE.Apache-2.0` for the parts that came from boxkit.)
 
 ## Reliability and testing
 
