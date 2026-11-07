@@ -68,16 +68,36 @@ systemctl --user daemon-reload
 systemctl --user enable --now appbox-update.timer
 ```
 
-The timer runs daily. `host/appbox-update` recreates the box only when it is
-at least 7 days old, and skips if Signal or Claude Desktop is running in it, so
-an open session is never killed and a skipped day is retried the next day. It
-pulls and verifies the image signature before touching the box, so a failed
-pull leaves the existing box in place. The service expects the checkout at
-`~/claude/appbox`; edit `ExecStart` if yours lives elsewhere.
+The timer fires daily at 04:30 (after Aurora's own 04:00 `uupd` run). On a
+laptop that is asleep at that hour, it fires as soon as the lid opens. Each run
+of `host/appbox-update`:
+
+1. Does nothing unless the box is at least 7 days old (so recreates are
+   weekly, and a skipped day is retried the next day).
+2. Skips if Signal or Claude Desktop is running in the box, so an open
+   session is never killed. If the box reaches 14 days old because the apps
+   never quit (an always-on desktop), it sends a desktop notification asking
+   you to quit them and run the update.
+3. Waits up to 2 minutes for the network (it is often still coming up right
+   after resume). If the network or pull fails, the service retries every
+   2 minutes, up to 5 times an hour, like `uupd`.
+4. Pulls and verifies the image signature, then recreates the box from that
+   exact verified digest with `pull=false`. Nothing touches the network after
+   the old box is deleted except the Claude Desktop install, and if that
+   fails, the script retries it and re-exports the launcher.
+5. Shows a notification while the box is rebuilt (about a minute; launchers
+   do not work during that window) and when it is done, then deletes the
+   previous image.
+
+The service expects the checkout at `~/claude/appbox`; edit `ExecStart` if
+yours lives elsewhere. `cosign` is looked up on `PATH`, then at Homebrew's
+`/home/linuxbrew/.linuxbrew/bin/cosign`.
 
 Run it by hand with `systemctl --user start appbox-update`, or
-`host/appbox-update --force` to skip the age check. Logs:
-`journalctl --user -u appbox-update`.
+`host/appbox-update --force` to skip the age check (the running-app check
+still applies). Logs: `journalctl --user -u appbox-update`.
+
+Per-host setup records live in [`docs/hosts/`](docs/hosts/).
 
 ## Adding an app
 

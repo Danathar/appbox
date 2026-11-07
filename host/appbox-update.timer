@@ -3,8 +3,10 @@ Description=Daily check to recreate the appbox distrobox (weekly in practice)
 Documentation=https://github.com/Danathar/appbox
 
 [Timer]
-OnCalendar=daily
-RandomizedDelaySec=1h
+# Overnight, after Aurora's 04:00 uupd run. If the laptop is suspended or off
+# then, it runs as soon as it wakes up.
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=15m
 Persistent=true
 
 [Install]

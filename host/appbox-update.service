@@ -1,11 +1,15 @@
 [Unit]
 Description=Recreate the appbox distrobox from the latest signed image
 Documentation=https://github.com/Danathar/appbox
-Wants=network-online.target
-After=network-online.target
+# Right after a laptop resumes the network may still be coming up; retry like
+# Aurora's uupd.service does.
+StartLimitIntervalSec=1h
+StartLimitBurst=5
 
 [Service]
 Type=oneshot
 # Points at the repo checkout so `git pull` updates the script and distrobox.ini.
 ExecStart=%h/claude/appbox/host/appbox-update
+Restart=on-failure
+RestartSec=2min
 TimeoutStartSec=1h
