@@ -1,0 +1,11 @@
+# ShellCheck settings, read by shellcheck itself and so by the `Lint
+# (shellcheck)` job in .github/workflows/ci.yml and by local runs.
+#
+# host/appbox-update, host/install, scripts/appbox.sh and
+# scripts/claude-desktop-sync pass with no disables; keep it that way.
+#
+# SC2030/SC2031: each @test in bats runs in its own subshell, so a test that
+# exports a STUB_* variable for the script it runs trips these "change is
+# local to the subshell" notes, even though a per-test change is exactly the
+# intent. Only the .bats files ever trigger them.
+disable=SC2030,SC2031
