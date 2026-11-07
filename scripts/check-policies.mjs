@@ -121,6 +121,44 @@ export function shellCode(text) {
 /** Replace quoted strings with "" so log text is not read as a command. */
 export const unquoted = (l) => l.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
 
+/** Remove the quote characters but keep the quoted words ("a b" -> a b). */
+export const dequoted = (l) =>
+    l.replace(/"((?:[^"\\]|\\.)*)"|'([^']*)'/g, (_, d, q) => d ?? q);
+
+/**
+ * Split a shell line into commands at ;, &&, || and | outside quotes, so a
+ * quoted argument stays with its command and a separator inside a string
+ * does not split it.
+ */
+export function shellCommands(line) {
+    const out = [];
+    let cur = '';
+    let quote = null;
+    for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (quote) {
+            cur += c;
+            if (c === '\\' && quote === '"' && i + 1 < line.length) cur += line[++i];
+            else if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") {
+            quote = c;
+            cur += c;
+        } else if (c === ';' || c === '|' || (c === '&' && line[i + 1] === '&')) {
+            if ((c === '|' || c === '&') && line[i + 1] === c) i++;
+            out.push(cur);
+            cur = '';
+        } else {
+            cur += c;
+        }
+    }
+    out.push(cur);
+    return out;
+}
+
+/** GitHub expression contexts are case-insensitive and a['b'] equals a.b. */
+export const normalizeExpressions = (l) =>
+    l.replace(/\[\s*(['"])(.*?)\1\s*\]/g, '.$2');
+
 const indentOf = (l) => l.match(/^\s*/)[0].length;
 const isBlank = (l) => l.trim() === '';
 
@@ -279,10 +317,11 @@ export function checkWorkflows(root, policy, files) {
         });
 
         if (usesPullRequestTarget(code)) {
-            const refs = (policy.pullRequestTargetForbidden ?? []).map((p) => new RegExp(p));
+            const refs = (policy.pullRequestTargetForbidden ?? []).map((p) => new RegExp(p, 'i'));
             code.forEach((l, i) => {
+                const norm = normalizeExpressions(l);
                 for (const re of refs) {
-                    if (re.test(l)) {
+                    if (re.test(norm)) {
                         v.push(
                             `${f}:${i + 1}: pull_request_target workflow references the PR head (/${re.source}/); it runs with a write token and must never check out or run PR code`,
                         );
@@ -342,13 +381,16 @@ export function checkImageSafety(root, policy) {
         }
         const code = shellCode(read(rel)).join('\n');
         for (const { line, text } of logicalLines(code)) {
-            const t = unquoted(text);
-            if (!installRe.test(t)) continue;
-            // Judge each command of the line on its own.
-            for (const seg of t.split(/;|&&|\|\||\|/)) {
-                if (!installRe.test(seg) || simulateRe.test(seg)) continue;
+            // Judge each command of the line on its own. Whether it is an
+            // install is decided with quoted text blanked (so an echo of
+            // "apt-get install x" is not one); which packages it names is
+            // read with the quotes removed (so install -y "pkg" still names pkg).
+            for (const cmd of shellCommands(text)) {
+                const bare = unquoted(cmd);
+                if (!installRe.test(bare) || simulateRe.test(bare)) continue;
+                const words = dequoted(cmd);
                 for (const p of pkgs) {
-                    if (pkgRe(p).test(seg)) {
+                    if (pkgRe(p).test(words)) {
                         v.push(`${rel}:${line}: installs ${p}, which is proprietary and must never be baked into the public image`);
                     }
                 }

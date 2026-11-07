@@ -46,7 +46,8 @@ For every `.github/workflows/*.yml`:
 - **`pull_request_target`** may be used (a labeler commonly does, so pull
   requests from forks can be labeled), but such a workflow must not reference the pull request head:
   no `github.event.pull_request.head.sha|ref|repo`, `github.head_ref`,
-  `refs/pull/` or `merge_commit_sha`. It runs with a write token, so checking
+  `refs/pull/` or `merge_commit_sha`, in any casing and with bracket access
+  (`github['event']['pull_request']['head']['sha']`) normalized first. It runs with a write token, so checking
   out or running fork code there hands that token to the fork.
 - **No event text in `run:`.** Expressions such as
   `${{ github.event.issue.title }}`, `github.head_ref` or `inputs.*` inside a
@@ -64,6 +65,8 @@ The Tier 2 invariants of the image and of `host/appbox-update`.
   name it. A simulated install (`apt-get install -s`, used to list Claude's
   dependencies) is allowed. A longer name such as `claude-desktop-sync` is
   not the package; a version pin, arch suffix or `.deb` file name is.
+  Quoting the name (`install -y "claude-desktop"`) does not hide it, while
+  quoted text in a log message (`echo "..."`) is not read as a command.
 - **The build-time guard stays.** In `scripts/appbox.sh`, after the last
   `apt-get install`, the `dpkg-query ... claude-desktop` check and its
   `exit 1` must remain (sequence `image-no-proprietary`).

@@ -258,6 +258,23 @@ test('workflows: pull_request_target is allowed but may not touch the PR head', 
     }
 });
 
+test('workflows: bracket access and casing do not hide the PR head (Codex review on #68)', () => {
+    const prt = GOOD_WF.replace('  pull_request:', '  pull_request_target:');
+    for (const expr of [
+        "github['event']['pull_request']['head']['sha']",
+        'github["event"]["pull_request"]["head"]["ref"]',
+        "github.event['pull_request'].head.sha",
+        "github[ 'event' ][ 'pull_request' ][ 'head' ][ 'repo' ][ 'full_name' ]",
+        'GitHub.Event.Pull_Request.Head.SHA',
+        'GITHUB.HEAD_REF',
+        "github['head_ref']",
+    ]) {
+        const body = prt.replace('# v7.0.1\n', `# v7.0.1\n        with:\n          ref: \${{ ${expr} }}\n`);
+        const vs = wf(body);
+        assert.ok(has(vs, /pull_request_target workflow references the PR head/), `${expr}\n${vs.join('\n')}`);
+    }
+});
+
 test('workflows: the PR head is fine in a plain pull_request workflow', () => {
     const body = GOOD_WF.replace('# v7.0.1\n', '# v7.0.1\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n');
     assert.deepEqual(wf(body), []);
@@ -333,6 +350,33 @@ test('image: installing claude-desktop in the build script fails', () => {
     ]) {
         const vs = run({ [sh]: edit(sh, 'apt-get clean', `${line}\napt-get clean`) });
         assert.ok(has(vs, /installs claude-desktop, which is proprietary/), `${line}\n${vs.join('\n')}`);
+    }
+});
+
+test('image: a quoted package name is still an install (Codex review on #68)', () => {
+    const cf = 'ContainerFiles/appbox';
+    const sh = 'scripts/appbox.sh';
+    assert.ok(has(run({ [cf]: read(cf) + 'RUN apt-get install -y "claude-desktop"\n' }), /ContainerFiles\/appbox:\d+: installs claude-desktop/));
+    for (const line of [
+        "apt-get install -y 'claude-desktop'",
+        'apt-get install -y "claude-desktop=1.2.3"',
+        'apt-get install -y signal-desktop "claude-desktop"',
+        'dpkg -i "/tmp/claude-desktop_1.2.3_amd64.deb"',
+        'echo "starting; really" && apt-get install -y "claude-desktop"',
+    ]) {
+        const vs = run({ [sh]: edit(sh, 'apt-get clean', `${line}\napt-get clean`) });
+        assert.ok(has(vs, /installs claude-desktop, which is proprietary/), `${line}\n${vs.join('\n')}`);
+    }
+});
+
+test('image: quoted text in a log message after an install is not a package', () => {
+    const sh = 'scripts/appbox.sh';
+    for (const line of [
+        'apt-get install -y foo || echo "claude-desktop is installed at box start"',
+        'echo "apt-get install -y claude-desktop; happens at box start"',
+        "echo 'apt-get install claude-desktop | later'",
+    ]) {
+        assert.deepEqual(run({ [sh]: edit(sh, '\napt-get update\n', `\n${line}\napt-get update\n`) }), [], line);
     }
 });
 
