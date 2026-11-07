@@ -131,7 +131,7 @@ report has no reason to push there), and opens no issue. Runs are listed at
   needed a revert or a fix within two weeks got past review and CI with a
   problem in it. On appbox that matters more than usual, because `main` is
   live: a merged change reaches every enrolled machine on its next timer run.
-- **Merged by is data, not a verdict.** appbox runs on a fully autonomous
+- **Merged by is data, not a verdict.** appbox runs on an autonomous
   hive, so agent PRs that pass the required checks are merged by the Hive
   app, and that is the intended flow. The column shows how the work is being
   merged; it is not a count of anything going wrong.

@@ -129,7 +129,7 @@ is in [docs/agent-boundaries.md](docs/agent-boundaries.md).
   machine impact (daemon-reload needed, image green before a dependent ini
   change).
 
-appbox runs on a fully autonomous hive, so **no tier has a human-merge gate**.
+appbox runs on an autonomous hive, so **no tier has a human-merge gate**.
 An agent PR merges once the required checks pass, Tier 2 included. Tier 2
 means more scrutiny, not a person clicking merge. The owner's brake is the
 `hold` label: a PR carrying `hold` does not merge, and an agent never removes

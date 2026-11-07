@@ -65,7 +65,7 @@ the coordinator rewrites this once all ACMM PRs are in.
 - **ACMM onboarding:** issues #16 to #59 and #63, split over six PRs plus the
   coordinator's README and ruleset work. Rows and PR numbers in
   [../docs/agent-tasks/2026-11-07.md](../docs/agent-tasks/2026-11-07.md).
-- **Merging:** fully autonomous hive, no human-merge gate on any tier. The
+- **Merging:** autonomous hive, no human-merge gate on any tier. The
   required check is CI's aggregate `test` job; Tier 2 changes get
   reviewer-agent review, tests and a stated machine impact. The owner's brake
   is the `hold` label.
