@@ -29,22 +29,22 @@ which already carries the distrobox host-integration pieces.
 
 ## Layout
 
-| Path | What it is |
-| --- | --- |
-| `ContainerFiles/appbox` | The image definition. `FROM` line and `UBUNTU_VERSION` guard live here. |
-| `scripts/appbox.sh` | Build-time setup: apt repos, keys, Signal, baked packages. |
-| `scripts/claude-desktop-sync` | Installs or upgrades Claude Desktop at box start (baked into the image). |
-| `packages/appbox.packages` | Extra Ubuntu packages to bake in, one per line. |
-| `keys/ublue-os-toolboxes.pub` | ublue's public key; CI refuses to build on an unsigned base. |
-| `distrobox.ini` | Box definition for `distrobox assemble`, including exported launchers. |
-| `host/` | The update script, its systemd user service and timer, and `host/install` to set them up. Shared by every machine. |
-| `hosts/` | One `<hostname>.env` (settings) and `<hostname>.md` (setup record) per machine, plus `example.env` as the template. |
+| Path                          | What it is                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ContainerFiles/appbox`       | The image definition. `FROM` line and `UBUNTU_VERSION` guard live here.                                             |
+| `scripts/appbox.sh`           | Build-time setup: apt repos, keys, Signal, baked packages.                                                          |
+| `scripts/claude-desktop-sync` | Installs Claude Desktop on a new box's first start, install only (baked into the image).                            |
+| `packages/appbox.packages`    | Extra Ubuntu packages to bake in, one per line.                                                                     |
+| `keys/ublue-os-toolboxes.pub` | ublue's public key; CI refuses to build on an unsigned base.                                                        |
+| `distrobox.ini`               | Box definition for `distrobox assemble`, including exported launchers.                                              |
+| `host/`                       | The update script, its systemd user service and timer, and `host/install` to set them up. Shared by every machine.  |
+| `hosts/`                      | One `<hostname>.env` (settings) and `<hostname>.md` (setup record) per machine, plus `example.env` as the template. |
 
 ## What is baked in vs installed at box start
 
-| App | Where | Why |
-| --- | --- | --- |
-| Signal Desktop | Baked into the image | AGPL-3.0, fine to redistribute. Launches immediately after a rebuild. |
+| App            | Where                                                     | Why                                                                                           |
+| -------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Signal Desktop | Baked into the image                                      | AGPL-3.0, fine to redistribute. Launches immediately after a rebuild.                         |
 | Claude Desktop | Installed by `init_hooks` on the first start of a new box | Proprietary. The public image only carries Anthropic's apt key and source, never the package. |
 
 The image does pre-install Claude Desktop's dependencies (all from the Ubuntu
@@ -123,14 +123,14 @@ of `host/appbox-update`:
    was skipped), checks Signal and Claude inside the box for newer versions,
    upgrades each one that is closed, and leaves each one that is open alone.
 
-| Situation | What happens | Notification |
-| --- | --- | --- |
-| New Signal or Claude version, app closed | Upgraded in place on the daily run | None (see the journal) |
-| New version, app open | Left alone; installed on the first daily run after you quit it | "Signal 8.x is ready" / "Claude 4.x is ready", once per new version |
-| Box is 7+ days old, an app is open | Rebuild skipped, retried daily | "Weekly apps update is waiting", once |
-| Box is 14+ days old, an app is open | Rebuild still skipped | "apps box is N days old", on every skipped run |
-| Rebuild starts / finishes | Box rebuilt (about a minute; launchers do not work meanwhile) | "Updating the apps box", then "apps box updated" |
-| Rebuild finished but a launcher is missing | Claude install retried, launcher re-exported | Critical notification pointing at the journal |
+| Situation                                  | What happens                                                   | Notification                                                        |
+| ------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| New Signal or Claude version, app closed   | Upgraded in place on the daily run                             | None (see the journal)                                              |
+| New version, app open                      | Left alone; installed on the first daily run after you quit it | "Signal 8.x is ready" / "Claude 4.x is ready", once per new version |
+| Box is 7+ days old, an app is open         | Rebuild skipped, retried daily                                 | "Weekly apps update is waiting", once                               |
+| Box is 14+ days old, an app is open        | Rebuild still skipped                                          | "apps box is N days old", on every skipped run                      |
+| Rebuild starts / finishes                  | Box rebuilt (about a minute; launchers do not work meanwhile)  | "Updating the apps box", then "apps box updated"                    |
+| Rebuild finished but a launcher is missing | Claude install retried, launcher re-exported                   | Critical notification pointing at the journal                       |
 
 **To apply an update right away:** quit the app (tray > Quit), then run
 `systemctl --user start appbox-update`. That runs the same daily logic now: it
@@ -303,8 +303,8 @@ appbox started from Universal Blue's
 [boxkit](https://github.com/ublue-os/boxkit) template, which is released under
 the Apache License 2.0. The parts carried over from it (the image build
 workflow, which began as boxkit's `build-boxkit.yml`, and the template's
-`.editorconfig`, `renovate.json` and `CODE_OF_CONDUCT.md`) remain available
-under Apache-2.0 as well; its licence text is kept in
-[LICENSE.Apache-2.0](LICENSE.Apache-2.0) as that licence requires. The project
+`.editorconfig` and `renovate.json`) remain available under Apache-2.0 as
+well; its licence text is kept in [LICENSE.Apache-2.0](LICENSE.Apache-2.0) as
+that licence requires. The project
 as a whole, including those parts together with everything added here, is
 distributed under GPL-3.0-only.
