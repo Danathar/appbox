@@ -1,0 +1,18 @@
+# Blank issues are off so reports coming in cold get the questions above. This
+# does not affect automation: the hive and other bots open issues through the
+# API, which bypasses issue forms.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem (private)
+    url: https://github.com/Danathar/appbox/security/advisories/new
+    about: >-
+      Use this instead of a public issue for anything that could let someone run
+      code on an enrolled machine, through main, the image, or its signature check.
+  - name: Setting up a new machine
+    url: https://github.com/Danathar/appbox/blob/main/docs/install.md
+    about: Installing appbox, moving data out of existing boxes, and enrolling the update timer.
+  - name: Problems with Signal or Claude Desktop themselves
+    url: https://github.com/Danathar/appbox/blob/main/README.md#what-is-baked-in-vs-installed-at-box-start
+    about: >-
+      appbox only packages and updates these apps. A bug in the app itself (not how
+      it is installed or updated here) belongs with Signal or Anthropic.

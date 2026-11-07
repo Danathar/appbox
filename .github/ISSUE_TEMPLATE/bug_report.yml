@@ -1,0 +1,108 @@
+name: Bug report
+description: The apps box, an app in it, or the update timer misbehaved on a machine
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a **security problem**, such as a way to run code on an enrolled machine through `main`, the image, or its signature check? Do not file it here. [Report it privately](https://github.com/Danathar/appbox/security/advisories/new) instead.
+
+        Please do not paste tokens, keys, or app data. Signal and Claude keep theirs in `~/.config`; nothing from there is needed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: For example "Signal launcher vanished after the weekly rebuild" or "Claude stayed on an old version for a week while closed".
+    validations:
+      required: true
+
+  - type: dropdown
+    id: app
+    attributes:
+      label: Which app?
+      options:
+        - Signal Desktop
+        - Claude Desktop
+        - Both
+        - Another app (say which below)
+        - None, the update timer or the box itself
+    validations:
+      required: true
+
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: >-
+        The short hostname (`hostname -s`), which matches its `hosts/<hostname>.env`
+        and `hosts/<hostname>.md` if it has them. Write "new machine" if you were
+        setting it up for the first time with `docs/install.md`.
+      placeholder: "aurora-think"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: gpu
+    attributes:
+      label: GPU vendor
+      description: An NVIDIA machine needs `nvidia=true` in its own `hosts/<hostname>.ini`.
+      options:
+        - Intel
+        - AMD
+        - NVIDIA
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: image
+    attributes:
+      label: Image the box was built from
+      description: >-
+        Output of `podman inspect apps --format '{{.ImageName}}'`. A box rebuilt by
+        the timer shows a pinned digest (`ghcr.io/danathar/appbox@sha256:...`); a box
+        made by hand shows the tag it used, such as `:latest` or a dated `:20261107`.
+        Write "no box" if the `apps` box does not exist.
+      placeholder: "ghcr.io/danathar/appbox@sha256:..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: show-config
+    attributes:
+      label: Settings in effect
+      description: Output of `~/claude/appbox/host/appbox-update --show-config` (use your checkout path if it is elsewhere). It only prints settings and does not touch the box.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: journal
+    attributes:
+      label: Update timer log
+      description: >-
+        The relevant part of `journalctl --user -u appbox-update -n 100`. Paste what
+        the normal timer runs logged; do not run `host/appbox-update` by hand just to
+        produce logs, because it can rebuild the box.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: App versions and Claude install log (optional)
+      description: >-
+        `distrobox enter apps -- dpkg-query -W signal-desktop claude-desktop` for the
+        installed versions. For a Claude install problem, also
+        `distrobox enter apps -- cat /var/log/appbox-claude-sync.log`.
+      render: text
+
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Before you post
+      options:
+        - label: I checked the pasted output for tokens, keys, and anything else I would not want public.
+          required: true

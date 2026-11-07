@@ -1,0 +1,65 @@
+name: Feature request
+description: Add an app to the box, or change how the box or the update timer behaves
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The image is public, so only apps whose licence allows redistribution are baked into it (Signal, AGPL-3.0). A proprietary app can still be added, but it is installed at box start from the vendor's apt repo by an init hook, the way Claude Desktop is. That is why the questions below ask about licence and repo.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of change?
+      options:
+        - Add an app to the box
+        - Change how updates, rebuilds, or notifications behave
+        - Per-machine settings or a new hosts/ option
+        - Docs
+        - Tests or CI
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation today, before any proposed solution. What is missing or inconvenient?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should change?
+      description: Include any new setting in `hosts/<hostname>.env`, new ini lines, or new notifications involved.
+    validations:
+      required: true
+
+  - type: input
+    id: app-name
+    attributes:
+      label: App to add (if adding an app)
+      description: Its name and the Ubuntu package name, if you know it.
+      placeholder: "Example App (example-app)"
+
+  - type: dropdown
+    id: app-licence
+    attributes:
+      label: Does the app's licence allow redistribution? (if adding an app)
+      description: If yes, it can be baked into the image. If no or unsure, it has to be installed at box start.
+      options:
+        - Not adding an app
+        - Yes, it is open source or explicitly redistributable
+        - No, it is proprietary
+        - Not sure
+
+  - type: input
+    id: app-repo
+    attributes:
+      label: Vendor apt repo (if adding an app)
+      description: >-
+        A link to the vendor's current Ubuntu/Debian install instructions, or
+        "Ubuntu archive" if it is packaged there. Say so if the vendor only offers a
+        Flatpak, AppImage, or tarball. Note that the image is amd64 only.

@@ -1,0 +1,71 @@
+# Path-to-label map for actions/labeler (.github/workflows/labeler.yml).
+#
+# A pull request gets every label whose paths it touches, so one PR can carry
+# several. Create the labels once ahead of time (Settings > Labels, or
+# `gh label create`) so they get a colour and description; a missing label is
+# created on first use with the default colour and no description.
+#
+# The labels describe the area of the repo, not the risk tier. A PR labelled
+# area/image or area/host touches files that machines run or the image
+# contains (Tier 2 in CONTRIBUTING.md and docs/risk-tiers.md).
+
+# What ends up inside ghcr.io/danathar/appbox, and how it is built and signed.
+'area/image':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'ContainerFiles/**'
+          - 'scripts/appbox.sh'
+          - 'scripts/claude-desktop-sync'
+          - 'packages/**'
+          - 'keys/**'
+          - 'cosign.pub'
+          - '.github/workflows/build-appbox.yml'
+
+# What runs on each enrolled machine: the update timer, its units, the box
+# definition, and per-machine settings and records.
+'area/host':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'host/**'
+          - 'hosts/**'
+          - 'distrobox.ini'
+
+# CI and repo tooling. The image build workflow is also area/image.
+'area/ci':
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/labeler.yml'
+          - '.github/rulesets/**'
+          - '.github/CODEOWNERS'
+          - 'scripts/*.mjs'
+          - 'policies/**'
+          - 'risk-config.json'
+          - '.coverage-thresholds.json'
+          - '.shellcheckrc'
+          - '.editorconfig'
+          - 'renovate.json'
+
+# Instructions and guard rails for AI agents working on the repo.
+'area/agents':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'AGENTS.md'
+          - 'CLAUDE.md'
+          - '.claude/**'
+          - '.cursor/**'
+          - '.github/copilot-instructions.md'
+          - '.github/prompts/**'
+
+'docs':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '*.md'
+
+'tests':
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'tests/**'
+          - 'scripts/tests/**'
+          - '.claude/hooks/tests/**'
