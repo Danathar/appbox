@@ -1,0 +1,68 @@
+name: Coverage gate
+
+# Measures line coverage of host/appbox-update and host/install under the bats
+# unit tests (tests/unit) with kcov, inside a Fedora container where kcov is
+# packaged, and fails when either drops below its floor in
+# .coverage-thresholds.json (compared by scripts/coverage-gate.mjs). The table
+# goes to the job summary and the full kcov report is kept as an artifact.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+concurrency:
+  group: coverage-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  coverage:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - name: Install kcov, bats and node
+        run: dnf install -y -q kcov bats gawk git nodejs
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Measure coverage with kcov
+        # The tests normally copy the scripts into a fresh directory per test.
+        # kcov reports per file path and reads the file again when it writes
+        # the report, so here every test uses the same fixed copy instead
+        # (APPBOX_TEST_REPO, see tests/unit/helpers.bash). Writes
+        # coverage/bats/coverage.json.
+        run: |
+          kcov --version
+          export APPBOX_TEST_REPO="$RUNNER_TEMP/appbox-under-test"
+          kcov --include-pattern="$APPBOX_TEST_REPO/host/" coverage bats tests/unit
+
+      - name: Compare against floor
+        run: |
+          set -o pipefail
+          node scripts/coverage-gate.mjs | tee gate.txt
+
+      - name: Publish table
+        if: always()
+        run: |
+          if [ -f gate.txt ]; then
+            { echo '### Line coverage (kcov)'; echo; cat gate.txt; echo; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload kcov report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kcov-report
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: ignore
