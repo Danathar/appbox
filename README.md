@@ -45,8 +45,17 @@ different source (Flatpak or AppImage) on an arm64 host.
 
 ## Using it on a machine
 
-Works as-is on Intel and AMD GPUs (Mesa is in the base image). On an NVIDIA
-host, add `nvidia=true` to `distrobox.ini`.
+**Setting up a new machine, including moving data out of existing boxes:**
+follow [`docs/install.md`](docs/install.md). To have Claude Code do it, paste
+[`docs/new-machine-prompt.md`](docs/new-machine-prompt.md) into a session on
+that machine. Before changing the repo from any machine, read
+[`docs/working-on-the-repo.md`](docs/working-on-the-repo.md).
+
+Works as-is on Intel and AMD GPUs (Mesa is in the base image). An NVIDIA
+machine needs `nvidia=true`; give it its own `hosts/<hostname>.ini` rather
+than changing the shared `distrobox.ini`.
+
+The short version:
 
 ```sh
 git clone https://github.com/Danathar/appbox ~/claude/appbox

@@ -103,9 +103,9 @@ order within each section. Tick items off or delete them as they are done.
 ## Rollout
 
 - [ ] **Migrate the desktop** with
-  [`migrate-desktop-prompt.md`](migrate-desktop-prompt.md). It is always on
-  and Signal probably never quits there, so watch whether the 14-day
-  notification becomes routine.
+  [`new-machine-prompt.md`](new-machine-prompt.md), which follows
+  [`install.md`](install.md). It is always on and Signal probably never quits
+  there, so watch whether the 14-day notification becomes routine.
 
 - [ ] **Try Cowork once (optional).** Its host prerequisites are verified, but
   a real task has never run, so the VM bundle has never been downloaded.
