@@ -38,6 +38,13 @@
 //   - Running host/install (symlinks the units and enables the timer),
 //     scripts/appbox.sh (image build step) and scripts/claude-desktop-sync
 //     (box-start init hook, which installs a package).
+//   - Behind any other program (`setarch x86_64 host/appbox-update`,
+//     `prlimit ... host/install`, `script -qc '...'`), a machine script's path
+//     is read as the command that program runs, with the same --show-config
+//     exception; behind programs that only read or inspect files
+//     (FILE_OPERAND_PROGRAMS: shellcheck, wc, cp, ls, gh, ...) it is data.
+//   - A shell's own options end at its first operand or `--`: `bash host/install
+//     -n` runs host/install with $1=-n, so only `bash -n FILE` is a syntax check.
 //   - `bash -n FILE` (syntax check), shellcheck, cat, grep and other readers of
 //     those files are fine.
 //   Owner switch: when Claude Code itself was started with
@@ -774,6 +781,18 @@ function checkKiller(cmd, args) {
 const CHECKED_NAMES = new Set([...LOOKTHROUGH, 'find', 'watch', 'flock', ...WRAPPERS]);
 const { builtCommandName, namesCheckedCommand } = commandNameReader(CHECKED_NAMES);
 
+// Programs that take file names only to read, list, copy or inspect them and
+// never execute them. Behind these a machine script's path is data
+// (`shellcheck host/appbox-update`, `wc -l host/install`); behind any other
+// program it counts as the command that program runs. `gh` is here so a PR
+// title or body may name the scripts; it still has its quoted text checked for
+// other commands.
+const FILE_OPERAND_PROGRAMS = new Set([
+    'shellcheck', 'shfmt', 'checkbashisms', 'actionlint', 'wc', 'ls', 'stat', 'file', 'cp', 'mv', 'ln', 'chmod', 'chown',
+    'touch', 'install', 'readlink', 'realpath', 'basename', 'dirname', 'md5sum', 'sha1sum', 'sha256sum', 'sha512sum',
+    'b2sum', 'cksum', 'du', 'tree', 'test', '[', '[[', 'code', 'gh', 'git-blame', 'meld', 'patch', 'tar', 'zip',
+]);
+
 /**
  * For a segment whose command is a program this hook neither checks nor steps
  * over (`setarch x86_64 distrobox rm apps`, `script -qc '...'`), the refusal
@@ -784,12 +803,19 @@ const { builtCommandName, namesCheckedCommand } = commandNameReader(CHECKED_NAME
 function checkUnlistedProgram(w, inlineEnv, state) {
     const cmd = basename(w[0]);
     if (ARGUMENT_ONLY_PROGRAMS.has(w[0])) return null;
+    // A machine script named behind this program is read as the command it runs
+    // (`setarch x86_64 host/appbox-update`, `prlimit ... host/install`), unless
+    // the program only reads or inspects files (FILE_OPERAND_PROGRAMS).
+    const readsScripts = !FILE_OPERAND_PROGRAMS.has(cmd);
+    // Only a path counts: a bare name (`journalctl -u appbox-update`) is a unit
+    // or a word, and a program would look it up on PATH, where the scripts are not.
+    const namesScript = (word) => readsScripts && word.includes('/') && ![null, 'unknown'].includes(machineScript(word));
     const env = Object.entries(inlineEnv).map(([name, value]) => `${name}=${value}`);
     let checked = 0;
     for (let n = 1; n < w.length; n++) {
         spend();
         let refusal = null;
-        if (namesCheckedCommand(w[n]) || namesCheckedCommand(unquoted(w[n]))) {
+        if (namesCheckedCommand(w[n]) || namesCheckedCommand(unquoted(w[n])) || namesScript(w[n])) {
             if (++checked > MAX_UNLISTED_INNER) {
                 return block(`Blocked: more than ${MAX_UNLISTED_INNER} commands this hook checks behind \`${cmd}\`, too many to read. Run them as commands of their own.`);
             }
@@ -800,7 +826,7 @@ function checkUnlistedProgram(w, inlineEnv, state) {
         if (!refusal) {
             for (const text of commandStrings(w[n])) {
                 spend();
-                const names = (t) => t.split(COMMAND_STRING_SEPARATORS).some((piece) => piece && namesCheckedCommand(piece));
+                const names = (t) => t.split(COMMAND_STRING_SEPARATORS).some((piece) => piece && (namesCheckedCommand(piece) || namesScript(piece)));
                 const segments = tokenize(text);
                 if (!names(text) && !names(unquoted(text)) && !segments.some((seg) => seg.length && builtCommandName(seg[0], true) !== null)) continue;
                 refusal = checkCommand(text, Object.create(state));
@@ -833,41 +859,63 @@ function checkFindExec(args, state) {
 /** Shell options that take the next word as their value (`bash -o pipefail script`). */
 const SHELL_VALUE_OPTS = ['-o', '+o', '-O', '+O', '--rcfile', '--init-file'];
 
-function checkShell(cmd, args, words, state) {
-    const { pipedFrom, stdinFrom, hereString, heredocBody } = words;
-    const syntaxOnly = args.some((a) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(a));
-    if (syntaxOnly) {
-        // `bash -n` only parses, but a later +n or `+o noexec` turns that off again.
-        const bad = args.find((a) => a.startsWith('+') || /[{}*?[$`]/.test(a));
-        if (bad !== undefined) return block(`Blocked: \`${cmd} -n ... ${bad}\`; +n or +o noexec turns the syntax check off, so the script would run.`);
-    }
-    let scripts;
-    if (cmd === 'fish') scripts = fishScripts(args);
-    else {
-        const c = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
-        const script = c === -1 ? undefined : args.slice(c + 1).find((a) => !a.startsWith('-'));
-        scripts = script === undefined ? [] : [script];
-    }
-    for (const script of scripts) {
-        if (/^\$\([\s\S]*\)$|^`[\s\S]*`$/.test(script.trim()) && extractSubstitutions(script).some(readsScript)) {
-            return block(`Blocked: \`${cmd} -c\` runs the text of a machine script. ${SCRIPT_WHY.updater}`);
-        }
-        const r = checkCommand(script, Object.create(state));
-        if (r) return r;
-    }
-    if (scripts.length || syntaxOnly) return null;
-    // The first operand is the script; the words after it are its arguments.
+/**
+ * A shell's own options and its first operand, read as the shell reads them:
+ * options stop at the first word that is not one, or after `--` or `-`. Words
+ * after the operand are the script's arguments (or, with -c, $0 and the
+ * positional parameters), never the shell's options, so `bash host/install -n`
+ * runs host/install with $1=-n.
+ */
+function shellInvocation(args) {
+    const options = [];
     let at = -1;
     for (let k = 0; k < args.length; k++) {
-        if (SHELL_VALUE_OPTS.includes(args[k])) k++;
-        else if (args[k] === '--') {
+        const a = args[k];
+        if (a === '--' || a === '-') {
             at = k + 1 < args.length ? k + 1 : -1;
             break;
-        } else if (!/^[-+]/.test(args[k])) {
+        }
+        if (SHELL_VALUE_OPTS.includes(a)) {
+            options.push(a, args[k + 1] ?? '');
+            k++;
+        } else if (/^[-+]./.test(a)) {
+            options.push(a);
+        } else {
             at = k;
             break;
         }
     }
+    return { options, at };
+}
+
+function checkShell(cmd, args, words, state) {
+    const { pipedFrom, stdinFrom, hereString, heredocBody } = words;
+    if (cmd === 'fish') {
+        for (const script of fishScripts(args)) {
+            const r = checkCommand(script, Object.create(state));
+            if (r) return r;
+        }
+    }
+    const { options, at } = shellInvocation(args);
+    const syntaxOnly = options.some((a) => /^-[a-zA-Z]*n[a-zA-Z]*$/.test(a));
+    if (syntaxOnly) {
+        // `bash -n` only parses, but a later +n or `+o noexec` turns that off again.
+        const bad = options.find((a) => a.startsWith('+') || /[{}*?[$`]/.test(a));
+        if (bad !== undefined) return block(`Blocked: \`${cmd} -n ... ${bad}\`; +n or +o noexec turns the syntax check off, so the script would run.`);
+    }
+    // With -c among the shell's own options, the operand is a command string.
+    const commandMode = cmd !== 'fish' && options.some((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
+    if (commandMode) {
+        if (at === -1) return null;
+        const script = args[at];
+        if (/^\$\([\s\S]*\)$|^`[\s\S]*`$/.test(script.trim()) && extractSubstitutions(script).some(readsScript)) {
+            return block(`Blocked: \`${cmd} -c\` runs the text of a machine script. ${SCRIPT_WHY.updater}`);
+        }
+        return checkCommand(script, Object.create(state));
+    }
+    if (syntaxOnly) return null;
+    if (cmd === 'fish' && fishScripts(args).length) return null;
+    // The first operand is the script; the words after it are its arguments.
     if (at !== -1) {
         const kind = machineScript(args[at], true);
         return kind ? checkScriptRun(kind, args.slice(at + 1), `\`${cmd} ${args[at]}\``) : null;
