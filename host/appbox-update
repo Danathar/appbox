@@ -188,8 +188,12 @@ nudge_skipped_rebuild() {
 # (A flag, not a return code: calling this as `rebuild_box && ...` would turn
 # off errexit inside it, and a failed pull or signature check must abort.)
 rebuild_skipped=0
+# The rebuild's temporary ini. Global, not local: the EXIT trap that removes
+# it runs when the script exits, after rebuild_box has returned, and under
+# `set -u` a local would be unset by then and fail the trap.
+tmp_ini=""
 rebuild_box() {
-    local digest pinned old_image tmp_ini running app missing=0
+    local digest pinned old_image running app missing=0
 
     # Pull and verify before touching the box, then recreate from that exact
     # digest with pull=false. `assemble --replace` deletes the old box first,
