@@ -1,0 +1,105 @@
+name: Agent audit trail
+
+# Reads back, once a month, the record of every agent pull request merged in
+# the previous 31 days, using scripts/ai-audit-report.mjs (rules and the
+# definition of "agent pull request" are in its header; tests in
+# scripts/tests/ai-audit-report.test.mjs).
+#
+# appbox runs on a fully autonomous hive: agent pull requests merge on their
+# own once the required checks pass, on every risk tier. So a bot merging is
+# expected and is not reported. The audit checks that each automatic merge
+# kept the rules that make that safe:
+#   - every non-merge commit has a DCO Signed-off-by trailer;
+#   - a pull request opened by the Hive App carries its hive signature line;
+#   - the checks main's ruleset requires were green on the head commit when it
+#     merged (read from the live ruleset, counted only from the ruleset's
+#     creation);
+#   - it did not merge while carrying the `hold` label, the owner's brake.
+#
+# Audit floor: appbox had no DCO or hive rules before this audit was added, so
+# auditing older merges would only report rules that did not exist yet. A
+# scheduled run (or a dispatch with `since` left blank) starts its window at
+# the later of 31 days ago and the commit time of the first commit on main
+# that added this file, read from git history (hence fetch-depth: 0), and the
+# summary says when the floor cut the window. A dispatch with an explicit
+# `since` runs without the floor, for a deliberate look back.
+#
+# Failure model: any finding fails the run, and the run summary names each
+# one. .github/workflows/auto-issues.yml turns the failed scheduled run into
+# one tracking issue. This workflow only reads: its token can read pull
+# requests, issues, checks and statuses and write nothing. A window with no
+# agent pull requests passes, and the summary says plainly that nothing was
+# audited (the hive may be paused).
+
+on:
+  schedule:
+    - cron: '29 6 1 * *' # monthly, the 1st at 06:29 UTC
+  workflow_dispatch:
+    inputs:
+      since:
+        description: Audit pull requests merged on or after this date (YYYY-MM-DD), with no audit floor. Blank means the last 31 days, floored at when this audit was added.
+        required: false
+        default: ''
+
+concurrency:
+  group: agent-audit
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  audit:
+    name: Audit merged agent pull requests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, to find the commit that added this workflow (the audit floor).
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Audit merged agent pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SINCE: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+          floor_args=()
+          if [ -z "$SINCE" ]; then
+            SINCE="$(date -u -d '31 days ago' +%F)"
+            floor="$(git log --diff-filter=A --format=%cI -- .github/workflows/agent-audit.yml | tail -1)"
+            if [ -z "$floor" ]; then
+              echo "::error::could not find the commit that added .github/workflows/agent-audit.yml; is the checkout shallow?"
+              exit 2
+            fi
+            echo "Audit floor: $floor"
+            floor_args=(--floor "$floor")
+          fi
+          # The script validates the date as well; this gives a clear error
+          # before any API call.
+          if [ "$(date -u -d "$SINCE" +%F 2>/dev/null || true)" != "$SINCE" ]; then
+            echo "::error::since must be a real date in YYYY-MM-DD form, got '$SINCE'"
+            exit 2
+          fi
+          status=0
+          node scripts/ai-audit-report.mjs --repo "$REPO" --since "$SINCE" "${floor_args[@]}" --output report.md || status=$?
+          if [ -f report.md ]; then cat report.md >> "$GITHUB_STEP_SUMMARY"; fi
+          case "$status" in
+            0) ;;
+            1) echo "::error::agent pull requests merged since $SINCE broke an audit rule; see the run summary" ;;
+            *) echo "::error::the audit could not run (exit $status: bad input, API error or truncated list); see the log" ;;
+          esac
+          exit "$status"

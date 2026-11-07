@@ -1,0 +1,221 @@
+name: Nightly compliance
+
+# Checks that can go wrong with nothing in a pull request changing, run every
+# night against main:
+#
+#   lint        shellcheck on every tracked shell script (found by shebang, plus
+#               *.sh and *.bats), so a new shellcheck release that flags
+#               existing code is noticed without a PR.
+#   actionlint  every workflow under .github/workflows, with a pinned,
+#               checksummed actionlint.
+#   image       the published ghcr.io/danathar/appbox:latest, which every
+#               enrolled machine pulls at its weekly recreate:
+#                 - its signature verifies against the committed cosign.pub
+#                   (the same command README.md tells people to run);
+#                 - it is not stale: created within image_max_age_days. The
+#                   build runs daily, so an old image means the build or its
+#                   schedule has stopped (GitHub disables schedules in quiet
+#                   public repositories after 60 days);
+#                 - claude-desktop is not installed in it. Claude Desktop is
+#                   proprietary and the image is public; it is installed at
+#                   box start by scripts/claude-desktop-sync, never baked in.
+#                   signal-desktop must be installed, which proves the check
+#                   can see packages at all.
+#   policies    node scripts/check-policies.mjs, when that file exists.
+#
+# The image job reads its tunables (staleness threshold, registry retries)
+# from .github/auto-qa-tuning.json and records what it measured as `auto-qa`
+# notice annotations: the image's age, and how many attempts each registry
+# operation needed. .github/workflows/auto-qa.yml reads those annotations back
+# each week to tune the values.
+#
+# A failed scheduled run is turned into one tracking issue by
+# .github/workflows/auto-issues.yml, which watches this workflow by its name.
+# Renaming it disconnects that. This workflow itself only reads.
+
+on:
+  schedule:
+    - cron: '41 9 * * *' # daily, after the 05:17 UTC image build has had time to finish
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-compliance
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/danathar/appbox
+
+jobs:
+  lint:
+    name: Shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run shellcheck on every shell script
+        run: |
+          set -euo pipefail
+          shellcheck --version
+          # host/appbox-update, host/install and scripts/claude-desktop-sync
+          # have no extension, so scripts are found by their shebang as well.
+          mapfile -t files < <(
+            {
+              git ls-files '*.sh' '*.bash' '*.bats'
+              git ls-files -z | xargs -0 awk 'FNR == 1 && /^#!.*(\/|env )(ba|da|k)?sh([[:space:]]|$)/ { print FILENAME } { nextfile }'
+            } | sort -u
+          )
+          printf 'Checking %s\n' "${files[@]}"
+          shellcheck "${files[@]}"
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/bin" actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # No file arguments: actionlint then lints every workflow in
+      # .github/workflows, so a new workflow is covered without editing this.
+      - name: Run actionlint
+        run: actionlint
+
+  image:
+    name: Published image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: "v2.6.5"
+
+      - name: Load tuning and the retry helper
+        run: |
+          set -euo pipefail
+          retries=$(jq -er '.nightly.network_retries.value' .github/auto-qa-tuning.json)
+          max_age=$(jq -er '.nightly.image_max_age_days.value' .github/auto-qa-tuning.json)
+          echo "RETRIES=$retries" >> "$GITHUB_ENV"
+          echo "MAX_AGE_DAYS=$max_age" >> "$GITHUB_ENV"
+          echo "Registry retries: $retries; staleness threshold: $max_age days"
+          # attempt <op name> <command...>: runs the command up to RETRIES+1
+          # times and records how many attempts it took as an annotation that
+          # scripts/auto-qa-tuner.mjs reads back.
+          cat > "$RUNNER_TEMP/attempt.sh" <<'EOF'
+          attempt() {
+              local op="$1" tries=1 allowed=$((RETRIES + 1))
+              shift
+              until "$@"; do
+                  if [ "$tries" -ge "$allowed" ]; then
+                      echo "::notice title=auto-qa::op=$op attempts=$tries allowed=$allowed result=failed"
+                      return 1
+                  fi
+                  tries=$((tries + 1))
+                  echo "$op failed; attempt $tries of $allowed in 30s"
+                  sleep 30
+              done
+              echo "::notice title=auto-qa::op=$op attempts=$tries allowed=$allowed result=ok"
+          }
+          EOF
+
+      - name: Resolve latest and check its age
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/attempt.sh"
+          # The command's output is redirected inside a function, never
+          # around `attempt`, so the annotations attempt prints still reach
+          # the log.
+          inspect_latest() { skopeo inspect --retry-times 0 "docker://$IMAGE:latest" > inspect.json; }
+          attempt inspect inspect_latest
+          digest=$(jq -er '.Digest' inspect.json)
+          created=$(jq -er '.Created' inspect.json)
+          echo "DIGEST=$digest" >> "$GITHUB_ENV"
+          age_hours=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
+          echo "::notice title=auto-qa::image_age_hours=$age_hours"
+          echo "$IMAGE:latest is $digest, created $created ($age_hours hours ago)"
+          if [ "$age_hours" -gt $(( MAX_AGE_DAYS * 24 )) ]; then
+            echo "::error::$IMAGE:latest is $age_hours hours old, more than $MAX_AGE_DAYS days. The daily build-appbox run has stopped publishing; check its recent runs and whether its schedule was disabled."
+            exit 1
+          fi
+
+      # Verified by digest, so the image checked below is the one whose
+      # signature was verified, even if latest moves during the run.
+      - name: Verify the signature against cosign.pub
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/attempt.sh"
+          verify() { cosign verify --key cosign.pub "$IMAGE@$DIGEST" > /dev/null; }
+          attempt cosign-verify verify
+          echo "Signature of $IMAGE@$DIGEST verifies against cosign.pub"
+
+      - name: Check that Claude Desktop is not baked in
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . "$RUNNER_TEMP/attempt.sh"
+          pull() { podman pull --quiet "$IMAGE@$DIGEST" > /dev/null; }
+          attempt pull pull
+          status() {
+            podman run --rm --network none --entrypoint /usr/bin/dpkg-query \
+              "$IMAGE@$DIGEST" -W -f '${Status}' "$1" 2> /dev/null || true
+          }
+          signal=$(status signal-desktop)
+          claude=$(status claude-desktop)
+          echo "signal-desktop: ${signal:-not installed}"
+          echo "claude-desktop: ${claude:-not installed}"
+          if [ "$signal" != "install ok installed" ]; then
+            echo "::error::signal-desktop is not installed in $IMAGE@$DIGEST, so either the image is broken or this check cannot read its package database"
+            exit 1
+          fi
+          if [ "$claude" = "install ok installed" ]; then
+            echo "::error::claude-desktop is installed in the public image $IMAGE@$DIGEST. It is proprietary and must only be installed at box start (scripts/claude-desktop-sync)."
+            exit 1
+          fi
+
+  policies:
+    name: Repository policies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Run scripts/check-policies.mjs
+        run: |
+          if [ ! -f scripts/check-policies.mjs ]; then
+            echo "::notice::scripts/check-policies.mjs is not in this checkout; skipping the policy check"
+            exit 0
+          fi
+          node scripts/check-policies.mjs
