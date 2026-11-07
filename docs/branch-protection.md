@@ -32,7 +32,7 @@ diff <(gh api repos/Danathar/appbox/rulesets/26764620 \
 
 ## Why
 
-This repository runs on a fully autonomous Hive (ACMM L6): agent pull requests
+This repository runs on Hive at ACMM L6 (Autonomous): agent pull requests
 merge once their required checks pass, with no person reading them first, and
 that includes Tier 2 changes to what machines run (see
 [`risk-tiers.md`](risk-tiers.md)). So the required checks are the gate, and
