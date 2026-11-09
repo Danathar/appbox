@@ -8,12 +8,16 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
     FLOOR,
+    actionInputs,
     checkAll,
     checkRiskTiers,
+    checkSecretArgv,
     checkWorkflows,
     classify,
     globToRegExp,
     logicalLines,
+    secretArgvFindings,
+    walk,
     workflowJobs,
     yamlCode,
 } from '../check-policies.mjs';
@@ -30,6 +34,7 @@ const REAL = [
     'policies/image-safety.json',
     'policies/repo-target.json',
     'policies/no-secrets.json',
+    'policies/secret-argv.json',
     'risk-config.json',
     'docs/risk-tiers.md',
     'scripts/appbox.sh',
@@ -394,6 +399,117 @@ for (const row of corpus.rows) {
     });
 }
 
+// ---------------------------------------------------------- secret argv
+//
+// A program's arguments are readable by every process on the runner
+// (/proc/<pid>/cmdline), so a secret must never be one (#84).
+
+const argvPolicy = JSON.parse(read('policies/secret-argv.json'));
+const secretFindings = (vs) => vs.filter((v) => /: secret on a command line /.test(v));
+const findingLines = (vs) => secretFindings(vs).map((v) => Number(v.match(/^[^:]+:(\d+):/)[1]));
+
+// The "Push To GHCR" step as it was before #84: push-to-registry turned the
+// username and password inputs into `podman push --creds=<user>:<token>`.
+const OLD_PUSH_WITH = [
+    '          registry: ${{ steps.registry_case.outputs.lowercase }}',
+    '          username: ${{ env.REGISTRY_USER }}',
+    '          password: ${{ env.REGISTRY_PASSWORD }}',
+].join('\n');
+
+test('secret-argv: the real workflows pass', () => {
+    assert.deepEqual(checkSecretArgv(repoRoot, argvPolicy, walk(repoRoot)), []);
+});
+
+test('secret-argv: the old push step with a password input fails (regression for #84)', () => {
+    const b = '.github/workflows/build-appbox.yml';
+    const body = edit(
+        b,
+        '        id: push\n        with:\n          image: ${{ steps.build_image.outputs.image }}\n          tags: ${{ steps.build_image.outputs.tags }}\n          registry: ${{ steps.registry_case.outputs.lowercase }}',
+        `        id: push\n        env:\n          REGISTRY_USER: \${{ github.actor }}\n          REGISTRY_PASSWORD: \${{ github.token }}\n        with:\n          image: \${{ steps.build_image.outputs.image }}\n          tags: \${{ steps.build_image.outputs.tags }}\n${OLD_PUSH_WITH}`,
+    );
+    const line = body.split('\n').findIndex((l) => l.includes('password: ${{ env.REGISTRY_PASSWORD }}')) + 1;
+    const vs = secretFindings(run({ [b]: body }));
+    assert.equal(vs.length, 1, vs.join('\n'));
+    assert.match(vs[0], new RegExp(`^\\.github/workflows/build-appbox\\.yml:${line}: secret on a command line \\(password: .* of redhat-actions/push-to-registry`));
+});
+
+test('secret-argv: a secret as a credential flag or in a URL is reported', () => {
+    for (const line of [
+        'podman login --password "$TOKEN" ghcr.io',
+        'docker login -u me -p ${{ github.token }} ghcr.io',
+        'docker login -u me -p${{ secrets.PAT }} ghcr.io',
+        'podman login --password=$REGISTRY_SECRET quay.io',
+        'deploy --registry-password "$token" x',
+        'skopeo copy --creds "me:$GH_TOKEN" docker://a docker://b',
+        'skopeo copy --src-creds=me:${SRC_TOKEN} a b',
+        "skopeo copy --dest-creds me:${{ secrets['GHCR_PAT'] }} a b",
+        'git push https://x-access-token:$GITHUB_TOKEN@github.com/o/r',
+        'git clone "https://oauth2:${{ secrets.GITLAB_TOKEN }}@gitlab.com/o/r"',
+        'curl -fsS https://${API_TOKEN}@example.com/x',
+    ]) {
+        assert.equal(secretArgvFindings(line, argvPolicy).length, 1, line);
+    }
+});
+
+test('secret-argv: stdin, a file, comments and non-secret values pass', () => {
+    for (const line of [
+        `printf '%s' "$TOKEN" | podman login ghcr.io -u me --password-stdin`,
+        `printf '%s' "\${{ secrets.PAT }}" | podman login ghcr.io -u me --password-stdin`,
+        `printf '%s' "$GH_TOKEN" > "$RUNNER_TEMP/token"`,
+        'podman login -u "$REGISTRY_ACTOR" --password-stdin ghcr.io',
+        'mkdir -p "$RUNNER_TEMP/bin"',
+        'psql -p "$PGPORT" -U "$PGUSER"',
+        'skopeo inspect --retry-times 0 "docker://$IMAGE:latest"',
+        '# never: podman login -p "$REGISTRY_TOKEN"',
+    ]) {
+        assert.deepEqual(secretArgvFindings(line, argvPolicy), [], line);
+    }
+});
+
+test('secret-argv: run scripts and push-to-registry inputs are checked, login-action is not', () => {
+    const body = GOOD_WF.replace('      - run: echo hi', [
+        '      - run: docker login ghcr.io -u me -p "${{ secrets.REGISTRY_PASSWORD }}"',
+        '      - name: multi',
+        '        env:',
+        '          GH_TOKEN: ${{ github.token }}',
+        '        run: |',
+        '          skopeo copy \\',
+        '            --creds "me:$GH_TOKEN" docker://a docker://b',
+        '          git clone "https://x-access-token:${GH_TOKEN}@github.com/o/r"',
+        '          podman login --password "$TOKEN" quay.io',
+        '          deploy --registry-password "$TOKEN" x',
+        `          printf '%s' "$GH_TOKEN" | podman login ghcr.io -u me --password-stdin`,
+        `          printf '%s' "$GH_TOKEN" > "$RUNNER_TEMP/token"`,
+        '          mkdir -p certs',
+        '          # never: podman login -p "$GH_TOKEN"',
+        '      - name: Push',
+        `        uses: redhat-actions/push-to-registry@${SHA} # v3.0.0`,
+        '        with:',
+        '          registry: ghcr.io/o',
+        '          username: ${{ github.actor }}',
+        '          password: ${{ github.token }}',
+        `      - uses: docker/login-action@${SHA} # v4.8.0`,
+        '        with:',
+        '          username: ${{ github.actor }}',
+        '          password: ${{ secrets.GITHUB_TOKEN }}',
+    ].join('\n'));
+    assert.deepEqual(findingLines(wf(body)), [12, 17, 19, 20, 21, 31]);
+});
+
+test('secret-argv: push-to-registry without a password input passes', () => {
+    const body = GOOD_WF.replace('      - run: echo hi', [
+        `      - uses: redhat-actions/push-to-registry@${SHA} # v3.0.0`,
+        '        env:',
+        '          password: ${{ github.token }}',
+        '        with:',
+        '          image: appbox',
+        '          registry: ghcr.io/o',
+    ].join('\n'));
+    assert.deepEqual(wf(body), []);
+    const inputs = actionInputs(yamlCode(body), 'redhat-actions/push-to-registry');
+    assert.deepEqual(inputs.map((x) => x.name), ['image', 'registry']);
+});
+
 // --------------------------------------------------------- image safety
 
 test('image: claude-desktop in the package list fails, a comment does not', () => {
@@ -712,10 +828,12 @@ test('missing policy files and the tier doc are violations, not skipped checks',
     const vs = run({
         'policies/image-safety.json': null,
         'policies/no-secrets.json': null,
+        'policies/secret-argv.json': null,
         'docs/risk-tiers.md': null,
     });
     assert.ok(has(vs, /^policies\/image-safety\.json: missing$/));
     assert.ok(has(vs, /^policies\/no-secrets\.json: missing$/));
+    assert.ok(has(vs, /^policies\/secret-argv\.json: missing$/));
     assert.ok(has(vs, /^docs\/risk-tiers\.md: missing$/));
 });
 

@@ -144,6 +144,34 @@ and are not matched. If this fails on a real key: remove it, then rotate the
 key (see [the runbook](../docs/ai-ops-runbook.md#a-leaked-secret)). An
 encrypted cosign key with an empty password is not protected.
 
+## secret-argv.json
+
+No secret on a command line. A program's arguments are readable by every
+process on the runner (`/proc/<pid>/cmdline`) while it runs, so a token
+handed over as an argument leaks to anything else running there. For every
+`.github/workflows/*.yml`:
+
+- **No credential flag with a secret in a `run:` script.** A value that
+  references a variable named `*TOKEN*`, `*PASSWORD*`, `*PASSWD*` or
+  `*SECRET*` (any case), or a `${{ }}` expression that does
+  (`secrets.*`, `github.token`), must not follow `-p`, `--password`,
+  `--creds` (`--src-creds`, `--dest-creds`) or `--registry-password`.
+  Backslash continuations are joined first; comment lines are skipped.
+- **No secret in a URL** in a `run:` script: `https://user:$TOKEN@host` or
+  `https://$TOKEN@host`.
+- **No secret in an action input that becomes a flag** (`actionInputs`):
+  `redhat-actions/push-to-registry` turns its `password:` input into
+  `podman push --creds=<user>:<password>`. Log in first with
+  `docker/login-action` (it reads the password on stdin) and give the push
+  step no `username:` or `password:`, as `build-appbox.yml` does
+  ([#84](https://github.com/Danathar/appbox/issues/84)).
+
+Pipe the secret in instead (`printf '%s' "$TOKEN" | podman login ...
+--password-stdin`) or write it to a file (`printf '%s' "$TOKEN" > file`);
+`printf` is a shell builtin, so neither puts the value in any program's
+arguments. A secret passed through `env:` is fine. The rule reads names, not
+values: a secret in a variable named like `$CREDS` is not seen.
+
 ## Risk tiers
 
 Not a JSON policy: the checker compares the tier table in
