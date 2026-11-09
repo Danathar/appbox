@@ -5,10 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
     FLOOR,
     checkAll,
     checkRiskTiers,
+    checkWorkflows,
     classify,
     globToRegExp,
     logicalLines,
@@ -328,6 +330,69 @@ test('workflows: an expression in a multi-line run body is caught', () => {
     const vs = wf(body);
     assert.ok(has(vs, /t\.yml:14: /), vs.join('\n'));
 });
+
+// ------------------------------------------------ shared regression corpus
+//
+// policies/check-policies-corpus.json is the one table every copy of this
+// checker in the fleet shares (dns-failover, akmods, openaudible-autoupdate,
+// tududi, appbox). Each row is a workflow and the run-expression violations
+// the checker has to report for it, so a bypass fixed in one copy becomes a
+// row, and every copy without the fix fails here (Danathar/akmods#245). The
+// canonical copy lives in Danathar/dns-failover, so the file is pinned by hash
+// and never edited here.
+
+const CORPUS_FILE = '.github/workflows/check-policies-corpus.yml';
+const CORPUS_SHA256 = '7e21db1330eaa6e2ffa0173c7e673cc4f1107fbf2c5a51a254c6f0660506b8df';
+const corpusRaw = fs.readFileSync(path.join(repoRoot, 'policies/check-policies-corpus.json'));
+const corpus = JSON.parse(corpusRaw.toString('utf8'));
+const workflowPolicy = JSON.parse(read('policies/workflow-permissions.json'));
+
+/** The run-expression violations checkWorkflows reports for one corpus workflow. */
+function corpusFindings(workflow) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-policies-corpus-'));
+    try {
+        const file = path.join(dir, CORPUS_FILE);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${workflow.join('\n')}\n`);
+        return checkWorkflows(dir, workflowPolicy, [CORPUS_FILE])
+            .map((v) => v.match(/^(.+?):(\d+): \$\{\{\s*(.*?)\s*\}\} in a run script/))
+            .filter((m) => m && m[1] === CORPUS_FILE)
+            .map((m) => ({ line: Number(m[2]), expression: m[3] }));
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+test('corpus: the file is the dns-failover copy', () => {
+    assert.equal(
+        createHash('sha256').update(corpusRaw).digest('hex'),
+        CORPUS_SHA256,
+        'policies/check-policies-corpus.json differs from the pinned copy; change it in Danathar/dns-failover and copy it again',
+    );
+});
+
+test('corpus: every row is well formed and has a unique id', () => {
+    assert.equal(corpus.schema, 1);
+    assert.ok(corpus.rows.length > 0);
+    const ids = new Set();
+    for (const row of corpus.rows) {
+        assert.match(row.id, /^[a-z0-9-]+$/);
+        assert.ok(!ids.has(row.id), `duplicate corpus id ${row.id}`);
+        ids.add(row.id);
+        assert.equal(typeof row.why, 'string', `${row.id}: why`);
+        assert.ok(row.workflow.every((l) => typeof l === 'string'), `${row.id}: workflow`);
+        for (const v of row.violations) {
+            assert.ok(Number.isInteger(v.line) && v.line >= 1 && v.line <= row.workflow.length, `${row.id}: line`);
+            assert.ok(row.workflow[v.line - 1].includes(v.expression), `${row.id}: line ${v.line} names ${v.expression}`);
+        }
+    }
+});
+
+for (const row of corpus.rows) {
+    test(`corpus ${row.id}`, () => {
+        assert.deepEqual(corpusFindings(row.workflow), row.violations, `${row.id}: ${row.why}`);
+    });
+}
 
 // --------------------------------------------------------- image safety
 
