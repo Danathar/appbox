@@ -119,6 +119,16 @@ is committed. If a secret reaches a commit, issue, log or prompt, stop and
 tell the owner so it can be rotated; deleting the commit does not undo the
 exposure.
 
+Never put a secret on a command line, in a script or a workflow. A
+program's arguments are readable by every process on the machine
+(`/proc/<pid>/cmdline`), so a token passed as `-p`, `--password`, `--creds`
+or `--registry-password`, inside a `user:$TOKEN@` URL, or as the
+`password:` input of `redhat-actions/push-to-registry` (which passes it to
+`podman push --creds`) leaks to anything else on the runner. Pipe it in
+(`printf '%s' "$TOKEN" | podman login ... --password-stdin`), write it to a
+file, or log in with `docker/login-action` first.
+`policies/secret-argv.json` fails CI on such a line in any workflow.
+
 A workflow that needs a secret must skip cleanly when it is absent, never
 turn the repository red for it, and never echo it.
 

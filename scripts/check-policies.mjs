@@ -15,8 +15,11 @@
  *      image, signature checks still present and in order, init hook rules
  *   3. policies/repo-target.json           gh write commands name Danathar/appbox
  *   4. policies/no-secrets.json            no private key or secret file committed
- *   5. docs/risk-tiers.md vs risk-config.json  tier table drift
- *   6. the floor: a minimum set of rules hard-coded below, so that editing a
+ *   5. policies/secret-argv.json           no secret on a command line: a
+ *      credential flag or user:$TOKEN@ URL in a workflow run: script, or a
+ *      secret in an action input the action passes as one
+ *   6. docs/risk-tiers.md vs risk-config.json  tier table drift
+ *   7. the floor: a minimum set of rules hard-coded below, so that editing a
  *      JSON file alone cannot quietly drop the checks that guard Tier 2
  *
  * There is no human merge gate in this repository: agent pull requests merge
@@ -548,7 +551,144 @@ export function checkNoSecrets(root, policy, files) {
     return v;
 }
 
-// ------------------------------------------------------ 5. risk-tier drift
+// ----------------------------------------------------- 5. secret-argv policy
+
+/**
+ * Lines of every `run:` script in a workflow, as [{ line, text }] with
+ * 1-based physical line numbers. A `run: |` header contributes its indicator.
+ */
+export function runScriptLines(lines) {
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^(\s*(?:-\s+)?)run\s*:\s*(.*)$/);
+        if (!m) continue;
+        const indent = m[1].length;
+        out.push({ line: i + 1, text: m[2] });
+        let j = i + 1;
+        for (; j < lines.length; j++) {
+            if (!isBlank(lines[j]) && indentOf(lines[j]) <= indent) break;
+            out.push({ line: j + 1, text: lines[j] });
+        }
+        i = j - 1;
+    }
+    return out;
+}
+
+/** Join trailing-backslash continuations in [{ line, text }] (keeps the first line number). */
+function joinContinuations(entries) {
+    const out = [];
+    for (let i = 0; i < entries.length; i++) {
+        let { line, text } = entries[i];
+        while (/\\\s*$/.test(text) && i + 1 < entries.length) {
+            text = text.replace(/\\\s*$/, ' ') + entries[++i].text.trim();
+        }
+        out.push({ line, text });
+    }
+    return out;
+}
+
+/**
+ * The secret-on-argv findings for one shell command: a credential flag whose
+ * value references a secret, or a secret embedded as `user:$TOKEN@` in a URL.
+ * Piping the value in (`printf '%s' "$TOKEN" | ... --password-stdin`) or
+ * writing it to a file (`printf ... > file`) passes: printf is a builtin.
+ */
+export function secretArgvFindings(text, policy) {
+    if (/^\s*#/.test(text)) return [];
+    const secret = new RegExp(policy.secretReference, 'i');
+    const url = new RegExp(`(?:\\/\\/|:)(?:${policy.secretReference})@`, 'i');
+    const found = [];
+    for (const m of text.matchAll(new RegExp(policy.credentialFlagPattern, 'g'))) {
+        if (secret.test(m[3])) found.push(`${m[1] ?? m[2]} ${m[3]}`);
+    }
+    const u = text.match(url);
+    if (u) found.push(`${u[0]} in a URL`);
+    return found;
+}
+
+/**
+ * The `with:` inputs of every step that uses `action` (any ref), as
+ * [{ line, name, value }] with 1-based line numbers. `code` is comment-free
+ * YAML lines (yamlCode). Line based like the rest of this file: a flow
+ * mapping (`with: { a: b }`) is not read, and a block scalar value
+ * (`password: |`) is read as its indicator only.
+ */
+export function actionInputs(code, action) {
+    const out = [];
+    const name = action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const usesRe = new RegExp(`^(\\s*(?:-\\s+)?)uses\\s*:\\s*['"]?${name}@`);
+    for (let i = 0; i < code.length; i++) {
+        const m = code[i].match(usesRe);
+        if (!m) continue;
+        // The step's keys start where `uses` does (after the dash, if any).
+        const keyIndent = m[1].length;
+        let start = i;
+        if (!/^\s*-\s/.test(code[i])) {
+            for (let j = i - 1; j >= 0; j--) {
+                if (isBlank(code[j]) || indentOf(code[j]) >= keyIndent) continue;
+                const d = code[j].match(/^\s*-\s+/);
+                if (d && d[0].length === keyIndent) start = j;
+                break;
+            }
+        }
+        let end = start + 1;
+        while (end < code.length && (isBlank(code[end]) || indentOf(code[end]) >= keyIndent)) end++;
+        const keyAt = (k) => {
+            const d = code[k].match(/^\s*-\s+/);
+            if (k === start && d) return code[k].slice(d[0].length);
+            return indentOf(code[k]) === keyIndent ? code[k].trim() : '';
+        };
+        for (let k = start; k < end; k++) {
+            if (!/^with\s*:\s*$/.test(keyAt(k))) continue;
+            let childIndent = -1;
+            for (let c = k + 1; c < end; c++) {
+                if (isBlank(code[c])) continue;
+                const ind = indentOf(code[c]);
+                if (ind <= keyIndent) break;
+                if (childIndent === -1) childIndent = ind;
+                if (ind !== childIndent) continue;
+                const kv = code[c].match(/^\s*([\w-]+)\s*:\s*(.*)$/);
+                if (kv) out.push({ line: c + 1, name: kv[1], value: kv[2].trim() });
+            }
+        }
+        i = end - 1;
+    }
+    return out;
+}
+
+/**
+ * No secret on a command line. A program's arguments are readable by every
+ * process on the runner (/proc/<pid>/cmdline), so a token passed as a
+ * credential flag in a run: script, inside a URL, or to an action input the
+ * action turns into one (push-to-registry's password: becomes
+ * `podman push --creds`) leaks to anything else running there.
+ */
+export function checkSecretArgv(root, policy, files) {
+    const v = [];
+    const advice = 'pass it on stdin (printf \'%s\' "$TOKEN" | ... --password-stdin) or in a file, never as an argument';
+    const secret = new RegExp(policy.secretReference, 'i');
+    for (const f of files.filter((x) => matchesAny(policy.workflowGlobs, x))) {
+        const raw = fs.readFileSync(path.join(root, f), 'utf8').split(/\r?\n/);
+        for (const { line, text } of joinContinuations(runScriptLines(raw))) {
+            for (const what of secretArgvFindings(text, policy)) {
+                v.push(`${f}:${line}: secret on a command line (${what}); ${advice}`);
+            }
+        }
+        const code = yamlCode(raw.join('\n'));
+        for (const rule of policy.actionInputs ?? []) {
+            for (const input of actionInputs(code, rule.action)) {
+                if (rule.inputs.includes(input.name) && secret.test(input.value)) {
+                    v.push(
+                        `${f}:${input.line}: secret on a command line (${input.name}: ${input.value} of ${rule.action}; ${rule.why}); log in first with docker/login-action, which reads the password on stdin, and drop the input`,
+                    );
+                }
+            }
+        }
+    }
+    return v;
+}
+
+// ------------------------------------------------------ 6. risk-tier drift
 
 /** The tier of a path: the highest-numbered (riskiest) tier that matches. */
 export function classify(config, file) {
@@ -633,7 +773,7 @@ export function checkRiskTiers(config, markdown) {
     return v;
 }
 
-// ------------------------------------------------------------- 6. the floor
+// ------------------------------------------------------------- 7. the floor
 
 /**
  * The minimum the policies must keep. Every agent pull request merges once
@@ -731,6 +871,9 @@ export function checkAll(root) {
 
     const secrets = readJson(root, 'policies/no-secrets.json', violations);
     if (secrets) violations.push(...checkNoSecrets(root, secrets, files));
+
+    const argv = readJson(root, 'policies/secret-argv.json', violations);
+    if (argv) violations.push(...checkSecretArgv(root, argv, files));
 
     const config = readJson(root, 'risk-config.json', violations);
     const docPath = path.join(root, 'docs/risk-tiers.md');
