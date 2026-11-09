@@ -21,7 +21,9 @@ name: Nightly compliance
 #                   box start by scripts/claude-desktop-sync, never baked in.
 #                   signal-desktop must be installed, which proves the check
 #                   can see packages at all.
-#   policies    node scripts/check-policies.mjs, when that file exists.
+#   policies    node scripts/check-policies.mjs, when that file exists, and a
+#               compare of policies/check-policies-corpus.json with its
+#               canonical copy in Danathar/dns-failover.
 #
 # The image job reads its tunables (staleness threshold, registry retries)
 # from .github/auto-qa-tuning.json and records what it measured as `auto-qa`
@@ -219,3 +221,21 @@ jobs:
             exit 0
           fi
           node scripts/check-policies.mjs
+
+      # policies/check-policies-corpus.json is a copy of the canonical file in
+      # Danathar/dns-failover (Danathar/akmods#245). The checker test pins the
+      # copy's hash, which catches a local edit but not a copy that has fallen
+      # behind its original, so this compares it with dns-failover's main.
+      - name: Compare the check-policies corpus with dns-failover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORPUS: policies/check-policies-corpus.json
+        run: |
+          set -euo pipefail
+          want=$(gh api "repos/Danathar/dns-failover/contents/$CORPUS" -H 'Accept: application/vnd.github.raw' | sha256sum | cut -d' ' -f1)
+          got=$(sha256sum "$CORPUS" | cut -d' ' -f1)
+          if [ "$got" != "$want" ]; then
+            echo "::error::$CORPUS is $got; Danathar/dns-failover main has $want. Copy the file from there and update CORPUS_SHA256 in scripts/tests/check-policies.test.mjs."
+            exit 1
+          fi
+          echo "$CORPUS matches Danathar/dns-failover main ($got)."
