@@ -55,6 +55,19 @@ For every `.github/workflows/*.yml`:
   Numbers, SHAs and the repository name are allowed
   (`forbiddenRunExpressions`).
 
+## check-policies-corpus.json
+
+Not a rule: the fleet's shared regression corpus for this checker. Each row
+is one workflow and the run-expression violations the checker must report
+for it, one row per bypass fixed in any copy of the checker. The canonical
+copy is in
+[Danathar/dns-failover](https://github.com/Danathar/dns-failover/blob/main/policies/check-policies-corpus.json);
+this file is a byte copy, pinned by SHA-256 and replayed through
+`checkWorkflows` in `scripts/tests/check-policies.test.mjs` on every pull
+request ([Danathar/akmods#245](https://github.com/Danathar/akmods/issues/245)).
+Never edit it here: change the canonical copy, then copy it again and update
+the pin.
+
 ## image-safety.json
 
 The Tier 2 invariants of the image and of `host/appbox-update`.

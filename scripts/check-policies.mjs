@@ -331,7 +331,9 @@ export function checkWorkflows(root, policy, files) {
         }
 
         if (policy.forbiddenRunExpressions) {
-            v.push(...checkRunExpressions(f, code, policy));
+            // Raw lines: inside a quoted scalar or a `run: |` block a `#` is not
+            // a YAML comment, and GitHub still substitutes an expression after it.
+            v.push(...checkRunExpressions(f, raw, policy));
         }
     }
     return v;
