@@ -27,6 +27,7 @@ jobs:
   push-ghcr:
     name: Build and push image
     runs-on: ubuntu-26.04
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
