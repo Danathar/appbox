@@ -4,8 +4,10 @@
 # repo mounted read-only at /src. Prints PASS or FAIL per check and exits 1 if
 # any check failed.
 #
-# The one thing this changes inside the container is the apt lists (the image
-# ships without them), to ask apt what a box-start install would pull in.
+# It changes the throwaway container in two ways: it refreshes the apt lists
+# (the image ships without them), and at the very end it runs the init hook,
+# which installs claude-desktop the way a new box's first start does. Neither
+# reaches the published image: this container is never committed or pushed.
 set -uo pipefail
 
 src="${SRC:-/src}"
@@ -88,13 +90,59 @@ echo "== Box-start install of Claude Desktop"
 # scripts/appbox.sh pre-installs claude-desktop's dependencies so the init
 # hook installs one package, not ~200. Ask apt (simulate only) what an install
 # would add now.
+apt_ok=0
 if apt-get -qq -o Acquire::Retries=3 update; then
+  apt_ok=1
   mapfile -t would_install < <(apt-get install -s claude-desktop 2> /dev/null | awk '/^Inst / { print $2 }')
   check "Anthropic's repo offers claude-desktop" [ "${#would_install[@]}" -gt 0 ]
   only_claude() { [ "${#would_install[@]}" -eq 1 ] && [ "${would_install[0]}" = claude-desktop ]; }
   check "installing claude-desktop adds only claude-desktop (would install: ${would_install[*]:-nothing})" only_claude
 else
   fail "apt-get update failed inside the image (network, or a broken apt source)"
+fi
+
+echo "== Running claude-desktop-sync"
+# Runs the init hook itself, last, because it installs claude-desktop and
+# every check above needs it absent. distrobox-init runs with errexit, so the
+# hook must exit 0 even when the install fails, and it must never upgrade an
+# installed claude-desktop (AGENTS.md, hard rules). A fake apt-get first on
+# PATH stands in for a broken network and records any call.
+if [ "${apt_ok}" = 1 ]; then
+  fakebin="$(mktemp -d)"
+  hook_out="$(mktemp)"
+  apt_called="${fakebin}/apt-get-called"
+  printf '#!/bin/sh\n: > %s\nexit 100\n' "${apt_called}" > "${fakebin}/apt-get"
+  chmod +x "${fakebin}/apt-get"
+
+  # run_hook [PATH-prefix]: runs the hook, output to $hook_out, status to $hook_status.
+  run_hook() {
+    hook_status=0
+    PATH="${1:+$1:}${PATH}" "${sync}" > "${hook_out}" 2>&1 || hook_status=$?
+  }
+  hook_exited_0() { [ "${hook_status}" -eq 0 ]; }
+
+  run_hook "${fakebin}"
+  check "the hook exits 0 when the install fails (exit ${hook_status})" hook_exited_0
+  check "the hook warns that a failed install is retried on next box start" \
+    grep -q 'WARNING: claude-desktop install failed; it will be retried' "${hook_out}"
+  check "a failed install leaves claude-desktop uninstalled" not_installed claude-desktop
+
+  rm -f "${apt_called}"
+  run_hook
+  check "the hook exits 0 on a new box (exit ${hook_status})" hook_exited_0
+  check "the hook installs claude-desktop on a new box" installed claude-desktop
+  if ! hook_exited_0 || not_installed claude-desktop; then cat "${hook_out}" >&2; fi
+
+  if installed claude-desktop; then
+    run_hook "${fakebin}"
+    check "with claude-desktop installed the hook exits 0 (exit ${hook_status})" hook_exited_0
+    check "with claude-desktop installed the hook never calls apt-get (install only, never upgrade)" \
+      [ ! -e "${apt_called}" ]
+  else
+    fail "cannot check the already-installed case: the hook did not install claude-desktop"
+  fi
+else
+  fail "claude-desktop-sync was not run: apt-get update failed above"
 fi
 
 echo
