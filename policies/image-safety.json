@@ -38,8 +38,10 @@
             "name": "build-signing",
             "file": ".github/workflows/build-appbox.yml",
             "steps": [
-                { "pattern": "cosign verify --key keys/ublue-os-toolboxes\\.pub", "why": "the check of ublue's signature on the base image" },
+                { "pattern": "\\bpodman pull\\b", "why": "pulling the base image once" },
+                { "pattern": "cosign verify --key keys/ublue-os-toolboxes\\.pub [^\\n]*@\\$\\{digest\\}", "why": "the check of ublue's signature on the base image" },
                 { "pattern": "redhat-actions/buildah-build@|\\bbuildah (?:bud|build)\\b|\\bpodman build\\b", "why": "the image build" },
+                { "pattern": "--pull=never", "why": "building from the verified local base without pulling it again" },
                 { "pattern": "redhat-actions/push-to-registry@|\\b(?:buildah|podman) push\\b", "why": "the push to ghcr.io" },
                 { "pattern": "\\bcosign sign\\b", "why": "signing the pushed digest" },
                 { "pattern": "cosign verify --key cosign\\.pub", "why": "verifying the new signature against the committed cosign.pub" }

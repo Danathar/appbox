@@ -51,8 +51,13 @@ jobs:
       - name: Verify base image signature
         run: |
           base=$(awk '/^FROM / { print $2; exit }' ./ContainerFiles/${{ matrix.containerfile }})
-          cosign verify --key keys/ublue-os-toolboxes.pub "${base}" > /dev/null
-          echo "Verified ${base}"
+          # Pull once and verify that exact digest. The build below uses this
+          # local copy (--pull=never), so it cannot pick up a different image
+          # if the tag moves after the check.
+          podman pull -q "${base}" > /dev/null
+          digest=$(podman image inspect -f '{{.Digest}}' "${base}")
+          cosign verify --key keys/ublue-os-toolboxes.pub "${base%:*}@${digest}" > /dev/null
+          echo "Verified ${base%:*}@${digest}"
 
       # latest, plus a dated tag to roll back to if an update breaks something
       - name: Image tags
@@ -80,6 +85,9 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           oci: true
+          # Build from the base pulled and verified above; never fetch it again
+          extra-args: |
+            --pull=never
 
       # Workaround bug where capital letters in your GitHub username make it impossible to push to GHCR.
       # https://github.com/macbre/push-to-ghcr/issues/12

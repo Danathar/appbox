@@ -622,6 +622,27 @@ test('image: the build must verify the base, build, push, sign and verify, in th
     assert.ok(has(run({ [b]: moved.join('\n') }), /"build-signing".*out of order/));
 });
 
+test('image: the build must use the exact base digest whose signature was checked', () => {
+    const b = '.github/workflows/build-appbox.yml';
+    assert.deepEqual(run({ [b]: read(b) }), []);
+    // Verifying the moving tag instead of the pulled digest.
+    const byTag = read(b).replace('"${base%:*}@${digest}" > /dev/null', '"${base}" > /dev/null');
+    assert.notEqual(byTag, read(b), 'fixture edit did not apply');
+    assert.ok(has(run({ [b]: byTag }), /"build-signing": the check of ublue's signature on the base image is missing/));
+    // No pull before the check, so there is no local copy to pin.
+    const noPull = read(b).replace(/podman pull -q /, 'echo ');
+    assert.notEqual(noPull, read(b), 'fixture edit did not apply');
+    assert.ok(has(run({ [b]: noPull }), /"build-signing": pulling the base image once is missing/));
+    // The build may look the tag up again and fetch an unchecked image.
+    const repull = read(b).replace(/\n\s+extra-args: \|\n\s+--pull=never/, '');
+    assert.notEqual(repull, read(b), 'fixture edit did not apply');
+    assert.ok(has(run({ [b]: repull }), /"build-signing": building from the verified local base without pulling it again is missing/));
+    // Mentioning it in a comment does not count.
+    const commented = read(b).replace(/(\n\s+)--pull=never/, '$1# --pull=never');
+    assert.notEqual(commented, read(b), 'fixture edit did not apply');
+    assert.ok(has(run({ [b]: commented }), /without pulling it again is missing/));
+});
+
 test('image: a commented-out signing step does not count', () => {
     const b = '.github/workflows/build-appbox.yml';
     const body = read(b).replace(/(\s+)cosign sign /, '$1# cosign sign ');
