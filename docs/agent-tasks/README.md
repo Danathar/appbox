@@ -59,7 +59,8 @@ The marks a change carries, and how to read them:
   ```
 
 - **Audit.** `.github/workflows/agent-audit.yml` reports agent PRs that lack a
-  closing reference or a signature.
+  closing reference or a signature. `.github/workflows/agent-signature.yml`
+  checks the signature earlier, on the open PR, as an advisory check.
 
 None of these marks is enforced on every change; the ledger is where a gap is
 closed by hand.
