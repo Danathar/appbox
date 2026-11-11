@@ -49,7 +49,8 @@ fingerprint_of() {
   need_gpg
   run fetch_key "file://$BATS_FILE_TMPDIR/pinned.asc" "$(fingerprint_of pinned)" "$OUT"
   [ "$status" -eq 0 ]
-  cmp -s "$OUT" "$BATS_FILE_TMPDIR/pinned.asc"
+  # sha256sum, not cmp: the Fedora CI container has no diffutils.
+  [ "$(sha256sum < "$OUT")" = "$(sha256sum < "$BATS_FILE_TMPDIR/pinned.asc")" ]
 }
 
 @test "refuses a different key" {
