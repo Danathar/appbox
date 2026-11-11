@@ -1,0 +1,60 @@
+name: Agent PR signature
+
+# Checks, while an agent pull request is still open, that its body has the
+# hive signature line (an em dash, then `hive: agent=<name> ...`) the monthly
+# agent-audit.yml run requires of Hive App pull requests. The audit sees a
+# missing line only after the merge, when the body can no longer be fixed.
+# Here it can still be added before the merge.
+#
+# It runs on agent pull requests only: those opened by the Hive App
+# (`danathar-atomic-hive[bot]`, the webhook spelling of
+# `app/danathar-atomic-hive`) and those on an `ai-fix/` branch. Any other pull
+# request skips the job.
+#
+# scripts/pr-signature-check.mjs (tests: scripts/tests/pr-signature-check.test.mjs)
+# calls findSignature from scripts/ai-audit-report.mjs, the function the audit
+# uses, so the two cannot drift apart.
+#
+# Advisory: the `signature` check is not in main's ruleset and is not in the
+# `needs:` of ci.yml's `test` job. It is meant to become required once it has
+# run clean for a month.
+#
+# Read-only: `pull_request` (never `pull_request_target`), so no secrets; the
+# token can only read contents and the checkout keeps no credentials. The body
+# reaches the script through `env:` only, never through an expression in the
+# run script.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: agent-signature-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  signature:
+    if: >-
+      github.event.pull_request.user.login == 'danathar-atomic-hive[bot]'
+      || startsWith(github.event.pull_request.head.ref, 'ai-fix/')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Check the pull request body for a signature line
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/pr-signature-check.mjs

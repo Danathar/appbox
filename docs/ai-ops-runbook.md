@@ -90,6 +90,7 @@ yet.
 | `nightly-compliance.yml` | re-runs the checks against `main` every night and reports failures in one tracking issue                        |
 | `auto-issues.yml`        | opens or updates a tracking issue when a run on `main` fails                                                    |
 | `agent-audit.yml`        | checks merged agent pull requests for a linked issue, a signature line and the expected merger                  |
+| `agent-signature.yml`    | fails an open agent pull request whose body has no hive signature line; advisory, not a required check          |
 | `auto-qa.yml`            | proposes raising coverage floors in an issue; never lowers one                                                  |
 | `ai-fix.yml`             | asks an AI agent to verify and apply review findings on request                                                 |
 | `claude.yml`             | runs Claude Code when mentioned on an issue or pull request                                                     |
