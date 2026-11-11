@@ -29,9 +29,12 @@ installed() {
 }
 not_installed() { ! installed "$1"; }
 
-# key_fingerprint FILE: primary key fingerprint of an armored or binary key.
+# key_fingerprint FILE: the primary key fingerprint of every key in an armored
+# or binary key file, one per line, so a file with an extra key does not match
+# a single pinned fingerprint.
 key_fingerprint() {
-  gpg --show-keys --with-colons "$1" 2> /dev/null | awk -F: '/^fpr:/ { print $10; exit }'
+  gpg --show-keys --with-colons "$1" 2> /dev/null |
+    awk -F: '/^pub:/ { primary = 1; next } primary && /^fpr:/ { print $10; primary = 0 }'
 }
 
 # Pinned in scripts/appbox.sh (fetch_key). Checked against it below so a key
@@ -49,6 +52,8 @@ check "${ID} ${VERSION_ID} is Ubuntu ${want_version}, the UBUNTU_VERSION in Cont
 echo "== Signal"
 check "signal-desktop is installed" installed signal-desktop
 check "Signal's apt source is present" test -s /etc/apt/sources.list.d/signal-desktop.sources
+check "Signal's apt source trusts only Signal's keyring" \
+  grep -qx 'Signed-By: /usr/share/keyrings/signal-desktop-keyring.gpg' /etc/apt/sources.list.d/signal-desktop.sources
 check "Signal's keyring is present" test -s /usr/share/keyrings/signal-desktop-keyring.gpg
 check "the test's Signal fingerprint is the one scripts/appbox.sh pins" \
   grep -q "${signal_fpr}" "${src}/scripts/appbox.sh"

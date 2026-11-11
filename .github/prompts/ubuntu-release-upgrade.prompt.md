@@ -21,8 +21,9 @@ stays on ghcr, so machines keep working meanwhile. Move appbox to Ubuntu
    the build is green. Look up each replacement package for the new release;
    do not guess names.
 4. Check the vendor repos against their current install instructions. Neither
-   names an Ubuntu codename today (Signal's `.sources` file is downloaded from
-   Signal; Claude Desktop uses the `stable` suite), but both vendors publish
+   follows the Ubuntu release today (Signal's `.sources` file, copied into
+   `scripts/appbox.sh` from the one Signal publishes, uses the fixed `xenial`
+   suite; Claude Desktop uses the `stable` suite), but both vendors publish
    packages built against a set of Ubuntu libraries, so read the build log for
    dependency errors. Each `fetch_key` fingerprint stays as it is unless the
    vendor's own docs show a new one.

@@ -14,15 +14,18 @@ if [ "${VERSION_ID}" != "${UBUNTU_VERSION:?UBUNTU_VERSION must be set}" ]; then
     exit 1
 fi
 
-# Download a signing key and refuse it unless its primary fingerprint matches.
+# Download a signing key and refuse it unless the file holds exactly that one
+# key. Every primary key is compared, not just the first: apt trusts any key in
+# a signed-by file, so an extra key after the pinned one would otherwise pass.
 # usage: fetch_key URL EXPECTED_FINGERPRINT OUTPUT_FILE
 fetch_key() {
     local url="$1" expected="$2" out="$3" tmp actual
     tmp="$(mktemp)"
     curl -fsSL --retry 3 -o "${tmp}" "${url}"
-    actual="$(gpg --show-keys --with-colons "${tmp}" | awk -F: '/^fpr:/ { print $10; exit }')"
+    actual="$(gpg --show-keys --with-colons "${tmp}" |
+        awk -F: '/^pub:/ { primary = 1; next } primary && /^fpr:/ { print $10; primary = 0 }')"
     if [ "${actual}" != "${expected}" ]; then
-        echo "Key fingerprint mismatch for ${url}: got ${actual}, expected ${expected}" >&2
+        echo "Key fingerprint mismatch for ${url}: got ${actual//$'\n'/ }, expected ${expected}" >&2
         exit 1
     fi
     install -m 0644 "${tmp}" "${out}"
@@ -30,14 +33,24 @@ fetch_key() {
 }
 
 # Signal (https://signal.org/download/linux/). amd64 only.
-# The key is dearmored, as Signal's instructions do; the .sources file is
-# Signal's own, so its format tracks whatever they publish.
+# The key is dearmored, as Signal's instructions do. The .sources file is a
+# copy of the one Signal publishes at
+# https://updates.signal.org/static/desktop/apt/signal-desktop.sources,
+# written here instead of downloaded: its Signed-By line (which can even hold a
+# key inline) decides which key apt trusts, so a downloaded copy would let that
+# server choose the key and skip the fingerprint check above.
 fetch_key https://updates.signal.org/desktop/apt/keys.asc \
     DBA36B5181D0C816F630E889D980A17457F6FB06 /tmp/signal-keys.asc
 gpg --dearmor < /tmp/signal-keys.asc > /usr/share/keyrings/signal-desktop-keyring.gpg
 rm -f /tmp/signal-keys.asc
-curl -fsSL --retry 3 -o /etc/apt/sources.list.d/signal-desktop.sources \
-    https://updates.signal.org/static/desktop/apt/signal-desktop.sources
+cat > /etc/apt/sources.list.d/signal-desktop.sources << 'EOF'
+Types: deb
+URIs: https://updates.signal.org/desktop/apt
+Suites: xenial
+Components: main
+Architectures: amd64
+Signed-By: /usr/share/keyrings/signal-desktop-keyring.gpg
+EOF
 
 # Claude Desktop: repo and key only. The package itself is proprietary and is
 # installed at box start by claude-desktop-sync, never baked into this image.
