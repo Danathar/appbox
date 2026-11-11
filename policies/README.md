@@ -84,9 +84,11 @@ The Tier 2 invariants of the image and of `host/appbox-update`.
   `apt-get install`, the `dpkg-query ... claude-desktop` check and its
   `exit 1` must remain (sequence `image-no-proprietary`).
 - **The signing chain stays, in order** (sequence `build-signing`, in
-  `build-appbox.yml`): verify the base image with
-  `cosign verify --key keys/ublue-os-toolboxes.pub`, build, push,
-  `cosign sign`, then `cosign verify --key cosign.pub`.
+  `build-appbox.yml`): `podman pull` the base image once, verify that pulled
+  digest (`image@${digest}`) with
+  `cosign verify --key keys/ublue-os-toolboxes.pub`, build with
+  `--pull=never` so the build uses that verified copy and cannot fetch a
+  different one, push, `cosign sign`, then `cosign verify --key cosign.pub`.
 - **The updater verifies before it replaces** (sequence `host-rebuild`, in
   `host/appbox-update`): `podman pull`, `verify --key`, the second
   `app_running_in_box` check, `image=${pinned}` and `pull=false` in the temp
