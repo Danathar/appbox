@@ -544,6 +544,8 @@ const DISTROBOX_NAMES = new Set([
 const ENGINES = new Set(['podman', 'docker', 'nerdctl', 'buildah']);
 const APT = new Set(['apt', 'apt-get', 'apt-mark', 'dpkg']);
 const KILLERS = new Set(['pkill', 'killall']);
+// `kill` takes pids, not names; the pids may come from a lookup by app name (see checkPidKill).
+const PID_KILLERS = new Set(['kill']);
 const REMOVERS_LIST = ['rm', 'rmdir', 'shred', 'unlink', 'mv', 'truncate'];
 // Words a wrapper or an unlisted program can hide; they are checked wherever they appear as a command.
 const LOOKTHROUGH = new Set([
@@ -774,6 +776,58 @@ function checkKiller(cmd, args) {
     );
 }
 
+// pgrep/pidof of Signal or Claude, as text: `$(pgrep -f signal-desktop)`, `pidof claude-desktop`.
+const APP_PID_LOOKUP = /\b(pgrep|pidof)\b[^)`]*(signal|claude)/i;
+const VAR_REF = /\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
+
+/** Does this word carry the pids of Signal or Claude: a lookup written in it, or a variable assigned from one? */
+function wordHasAppPids(word, state) {
+    if (APP_PID_LOOKUP.test(word)) return true;
+    // The reader keeps only a `$()` marker for an unquoted substitution, so the command line's own lookups decide.
+    if (state.appLookup && word.includes('$(')) return true;
+    const vars = state.appPidVars;
+    return vars !== undefined && [...word.matchAll(VAR_REF)].some((m) => vars.has(m[1]));
+}
+
+/** Is this pipe feeder a lookup of Signal's or Claude's pids, or does it print a variable holding them? */
+function feedsAppPids(seg, state) {
+    return seg.some((x, i) => ['pgrep', 'pidof'].includes(basename(x)) && seg.slice(i + 1).some((y) => /signal|claude/i.test(y))) ||
+        seg.some((x) => wordHasAppPids(x, state));
+}
+
+/** The earlier stages of the pipe this segment reads from. */
+function pipedWords(words) {
+    const out = [];
+    for (let p = words.pipedFrom; p; p = p.pipedFrom) out.push(p);
+    return out;
+}
+
+/**
+ * `kill` / `kill -9` of pids that come from pgrep/pidof of Signal or Claude: as
+ * a substitution in its words, through a variable assigned from one, or piped
+ * in (`pgrep signal-desktop | xargs kill`). `kill 1234` names no app and passes.
+ */
+function checkPidKill(cmd, args, words, xargsFed, state) {
+    const fed = args.some((a) => wordHasAppPids(a, state)) || (xargsFed && pipedWords(words).some((f) => feedsAppPids(f, state)));
+    if (!fed) return null;
+    return block(
+        `Blocked: \`${cmd}\` of pids found by name for Signal or Claude: distrobox shares the host PID namespace, so this kills the user's open app. ` +
+            'An open app is never touched. To fake a running app in a test, follow docs/working-on-the-repo.md (prctl).'
+    );
+}
+
+/** `xargs rm` and friends fed a protected path by an earlier pipe stage or here-string. */
+function checkFedRemover(cmd, words) {
+    const sources = [...pipedWords(words).flat(), ...(words.hereString === undefined ? [] : [words.hereString])];
+    for (const src of sources) {
+        for (const piece of src.split(/\s+/)) {
+            const hit = PROTECTED_PATHS.find(([re]) => re.test(piece));
+            if (hit) return block(`Blocked: \`${cmd}\` fed \`${piece}\` by xargs changes ${hit[1]}. Ask the owner.`);
+        }
+    }
+    return null;
+}
+
 // ---------------------------------------------------------------------------
 // Command names the shell builds, and programs this hook does not know
 // ---------------------------------------------------------------------------
@@ -842,6 +896,17 @@ function checkUnlistedProgram(w, inlineEnv, state) {
 
 /** `find ... -exec|-execdir|-ok|-okdir CMD ARGS ;`: each such command is checked like a segment. */
 function checkFindExec(args, state) {
+    // `find PROTECTED -delete` and `find PROTECTED -exec rm ... {} +` remove what find walks, so the start paths count.
+    const starts = [];
+    for (const a of args) {
+        if (a.startsWith('-') || a === '!' || a === '(') break;
+        starts.push(a);
+    }
+    const hit = starts.map((a) => PROTECTED_PATHS.find(([re]) => re.test(a))).find(Boolean);
+    if (hit) {
+        const removes = args.includes('-delete') || args.some((a, i) => FIND_EXEC.includes(a) && REMOVERS.has(basename(args[i + 1] ?? '')));
+        if (removes) return block(`Blocked: \`find\` deleting under ${hit[1]}. Ask the owner.`);
+    }
     for (let i = 0; i < args.length; i++) {
         if (!FIND_EXEC.includes(args[i])) continue;
         let end = i + 1;
@@ -965,7 +1030,13 @@ function checkSegment(words, state) {
             if (w[0] === 'function' || (w[0] === 'coproc' && w[2] === '{')) w.shift();
             w.shift();
         }
-        if (!w.length) return null;
+        if (!w.length) {
+            // A bare assignment from a pgrep/pidof of the apps: a later `kill $VAR` kills them.
+            for (const [name, value] of Object.entries(inlineEnv)) {
+                if (wordHasAppPids(value, state)) (state.appPidVars ??= new Set()).add(name);
+            }
+            return null;
+        }
         // A command name the shell builds with braces or wildcards: brace groups
         // that can build a checked command are refused, and a wildcard that can
         // match one is checked as each command it could match.
@@ -1030,6 +1101,10 @@ function checkSegment(words, state) {
     if (xargsFed && (cmd === 'git' || cmd === 'node' || cmd === 'nodejs' || SHELLS.has(cmd))) {
         return block(`Blocked: \`xargs ${cmd}\`; xargs adds arguments read at run time, so this hook cannot check the ${cmd} command line. Write it out in full.`);
     }
+    if (xargsFed && REMOVERS.has(cmd)) {
+        const r = checkFedRemover(cmd, words);
+        if (r) return r;
+    }
     if (cmd === 'export' || ((cmd === 'declare' || cmd === 'typeset') && args.some((a) => /^-[a-zA-Z]*x/.test(a)))) {
         for (const a of args) {
             const eq = a.indexOf('=');
@@ -1072,6 +1147,7 @@ function checkSegment(words, state) {
     if (cmd === 'rpm-ostree' || cmd === 'bootc') return checkImageTool(cmd, args);
     if (APT.has(cmd)) return checkApt(cmd, args);
     if (KILLERS.has(cmd)) return checkKiller(cmd, args);
+    if (PID_KILLERS.has(cmd)) return checkPidKill(cmd, args, words, xargsFed, state);
     if (REMOVERS.has(cmd)) return checkRemover(cmd, args);
     if (cmd === 'find') return checkFindExec(args, state);
     if (cmd === 'systemd-run' || cmd === 'flatpak-spawn') {
@@ -1084,8 +1160,12 @@ function checkSegment(words, state) {
 }
 
 /** Analyse a command line. Returns null if allowed, else { blocked, reason }. */
-export function checkCommand(command, state = {}) {
-    for (const sub of extractSubstitutions(command)) {
+export function checkCommand(command, outer = {}) {
+    const subs = extractSubstitutions(command);
+    // Whether this command line looks up the pids of Signal or Claude in a substitution (see wordHasAppPids).
+    const state = Object.create(outer);
+    state.appLookup = subs.some((sub) => APP_PID_LOOKUP.test(sub));
+    for (const sub of subs) {
         const r = checkCommand(sub, state);
         if (r) return r;
     }
