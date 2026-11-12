@@ -9,6 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { checkCommand, isSecretPath, machineScript, OWNER_ENV } from '../guard-bash.mjs';
 
@@ -559,4 +560,18 @@ test('hook protocol: an owner session still cannot read secrets', () => {
     const r = runHook(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cat cosign.key' } }), { [OWNER_ENV]: '1' });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /secret/);
+});
+
+test('settings allow git branch only in the exact forms that list branches', () => {
+    // A wildcard rule also allows `git branch -D`, `-f` and `-M`, which delete,
+    // rewind or rename a local branch with no prompt. Only exact read forms may
+    // be pre-approved.
+    const settings = JSON.parse(readFileSync(new URL('../../settings.json', import.meta.url), 'utf8'));
+    const rules = settings.permissions.allow.filter((rule) => rule.startsWith('Bash(git branch'));
+    assert.deepEqual(rules, [
+        'Bash(git branch)', 'Bash(git branch -a)', 'Bash(git branch -r)', 'Bash(git branch -v)',
+        'Bash(git branch -vv)', 'Bash(git branch --list)', 'Bash(git branch --show-current)',
+    ]);
+    assert.ok(!settings.permissions.allow.some((rule) => /^Bash\(git branch.*:\*\)$/.test(rule)),
+        'a wildcard git branch rule is back');
 });
