@@ -241,7 +241,7 @@ jobs:
       # through the action's flag-free git-push wrapper.
       - name: Run Claude Code
         if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
-        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
         with:
