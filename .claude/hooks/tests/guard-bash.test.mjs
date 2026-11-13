@@ -194,6 +194,8 @@ const blocked = [
     ['actionlint -pyflakes=host/install', /actionlint -pyflakes/],
     ['actionlint -color -pyflakes python3', /actionlint -pyflakes/],
     ['timeout 60 actionlint -shellcheck=/tmp/x.sh', /actionlint -shellcheck/],
+    // the actionlint check must not skip the checks that ran before it
+    ['actionlint -color distrobox rm apps', /distrobox|apps/],
     ['eval host/appbox-update', /appbox-update/],
     ['systemd-run --user host/appbox-update', /appbox-update/],
     ['find host -name appbox-update -exec {} \\;', /appbox-update|\{\}/],

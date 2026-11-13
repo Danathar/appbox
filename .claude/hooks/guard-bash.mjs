@@ -1161,7 +1161,10 @@ function checkSegment(words, state) {
         });
         return hit === undefined ? null : block(`Blocked: \`bats ${hit}\` sources the file to collect tests, which runs it. ${SCRIPT_WHY[machineScript(hit.split('=').pop(), true) ?? 'updater']}`);
     }
-    if (cmd === 'actionlint') return checkActionlint(args);
+    if (cmd === 'actionlint') {
+        const r = checkActionlint(args);
+        if (r) return r;
+    }
 
     if (READERS.has(cmd)) {
         const r = checkReader(cmd, args, stdinFrom);
