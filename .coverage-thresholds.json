@@ -1,16 +1,18 @@
 {
-  "$comment": "Line-coverage floors for the host scripts under the bats unit tests (tests/unit), measured with kcov in a Fedora container by .github/workflows/coverage-gate.yml and enforced by scripts/coverage-gate.mjs. kcov measures only lines for Bash. The tests run each script from a scratch copy of the repo at one fixed path (APPBOX_TEST_REPO), so 'file' is matched as a path suffix in kcov's per-file list. These floors are provisional: they were set before kcov had ever run on this repo (it cannot run on the machine the tests were written on), deliberately low. Raise each floor to a few points below the number the first CI run reports, and add a 'measured' entry with that number. Floors only go up; a human edits this file.",
+  "$comment": "Line-coverage floors for the host scripts under the bats unit tests (tests/unit), measured with kcov in a Fedora container by .github/workflows/coverage-gate.yml and enforced by scripts/coverage-gate.mjs. kcov measures only lines for Bash. The tests run each script from a scratch copy of the repo at one fixed path (APPBOX_TEST_REPO), so 'file' is matched as a path suffix in kcov's per-file list. Each floor sits a few points below the 'measured' number from the CI run named there; scripts/coverage-gate.mjs reads only 'floor'. kcov never credits an empty case arm or a 'done < file' line, so host/appbox-update cannot reach 100%. Floors only go up. Raising a floor makes the check catch more, so it is the 'Adding or widening a check' case in AGENTS.md's owner's standing decisions: an agent may raise one without asking. Lowering a floor, or exempting anything from it, needs the owner.",
   "tool": "kcov",
   "areas": {
     "host/appbox-update": {
       "summary": "coverage/bats/coverage.json",
       "file": "host/appbox-update",
-      "floor": { "lines": 50 }
+      "floor": { "lines": 95 },
+      "measured": { "lines": 97.92, "commit": "d98d2f8", "run": 43346007326 }
     },
     "host/install": {
       "summary": "coverage/bats/coverage.json",
       "file": "host/install",
-      "floor": { "lines": 50 }
+      "floor": { "lines": 95 },
+      "measured": { "lines": 100, "commit": "d98d2f8", "run": 43346007326 }
     }
   }
 }
