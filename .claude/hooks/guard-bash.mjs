@@ -43,6 +43,8 @@
 //     is read as the command that program runs, with the same --show-config
 //     exception; behind programs that only read or inspect files
 //     (FILE_OPERAND_PROGRAMS: shellcheck, wc, cp, ls, gh, ...) it is data.
+//     actionlint is one of those, but its -shellcheck/-pyflakes options name a
+//     program it runs, so any non-empty value for them is refused.
 //   - A shell's own options end at its first operand or `--`: `bash host/install
 //     -n` runs host/install with $1=-n, so only `bash -n FILE` is a syntax check.
 //   - `bash -n FILE` (syntax check), shellcheck, cat, grep and other readers of
@@ -321,6 +323,35 @@ function checkReader(cmd, args, stdinFrom) {
             'without looking (`gh secret set NAME -R Danathar/appbox < FILE`, cp, install -m 600), check them with ' +
             'ls -l, test -f or wc -c, and verify a key through its public half (`cosign public-key --key FILE`).'
     );
+}
+
+// settings.json allows `actionlint` with any arguments, and actionlint sits in
+// FILE_OPERAND_PROGRAMS, so a machine script's path behind it is data. But its
+// -shellcheck and -pyflakes options name the program it runs, once per `run:`
+// step, with the step's script on stdin: `actionlint -shellcheck=host/install`
+// would enable the timer once for every step. Same rule as Danathar/akmods#119.
+
+/** Value of a Go-style flag (`-name v`, `-name=v`, `--name=v`) at args[i], or undefined if args[i] is not that flag. */
+function goFlagValue(args, i, name) {
+    const m = /^--?([^=]+)(?:=(.*))?$/s.exec(args[i]);
+    if (!m || m[1] !== name) return undefined;
+    return m[2] !== undefined ? m[2] : (args[i + 1] ?? '');
+}
+
+/** actionlint: -shellcheck/-pyflakes name the executable it runs. An empty value disables the integration. */
+function checkActionlint(args) {
+    for (let i = 0; i < args.length; i++) {
+        for (const name of ['shellcheck', 'pyflakes']) {
+            const value = goFlagValue(args, i, name);
+            if (value === undefined || value === '') continue;
+            return block(
+                `Blocked: \`actionlint -${name} ${value}\` makes actionlint run "${value}" and feed it the workflows' ` +
+                    '`run:` scripts. Run plain `actionlint` (it finds shellcheck on PATH), or pass ' +
+                    `\`-${name}=\` to switch the integration off.`
+            );
+        }
+    }
+    return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1130,6 +1161,7 @@ function checkSegment(words, state) {
         });
         return hit === undefined ? null : block(`Blocked: \`bats ${hit}\` sources the file to collect tests, which runs it. ${SCRIPT_WHY[machineScript(hit.split('=').pop(), true) ?? 'updater']}`);
     }
+    if (cmd === 'actionlint') return checkActionlint(args);
 
     if (READERS.has(cmd)) {
         const r = checkReader(cmd, args, stdinFrom);
