@@ -365,7 +365,7 @@ assert_no_rebuild() {
   run_update
   assert_rebuild_exit
   [[ "$output" == *"Launcher for /usr/share/applications/com.anthropic.Claude.desktop is missing; retrying install and export"* ]]
-  [[ "$(calls)" == *"distrobox enter apps -- sudo /usr/libexec/appbox/claude-desktop-sync"* ]]
+  [[ "$(calls)" == *"distrobox enter apps -- sudo sh -c /usr/libexec/appbox/claude-desktop-sync"* ]]
   [[ "$(calls)" == *"distrobox enter apps -- distrobox-export --app /usr/share/applications/com.anthropic.Claude.desktop"* ]]
   [[ "$(calls)" != *"--app /usr/share/applications/signal-desktop.desktop"* ]]
   [ -e "$HOME/.local/share/applications/apps-com.anthropic.Claude.desktop" ]

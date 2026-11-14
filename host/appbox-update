@@ -88,8 +88,8 @@ force=0
 # One box per ini: `assemble create --replace` recreates every section and the
 # image rewrite below pins them all to the first box's image, so a second
 # section would be rebuilt from the wrong image without the open-app check.
-sections="$(grep -c '^\[.*\]$' "${ini}" || true)"
-if [ "${sections}" -gt 1 ]; then
+sections="$(sed -n '/^\[.*\]$/p' "${ini}" | sed -n '$=')"
+if [ "${sections:-0}" -gt 1 ]; then
     echo "${ini} has ${sections} [sections]; appbox-update manages one box per ini. Keep one section in it." >&2
     exit 1
 fi
@@ -137,8 +137,10 @@ app_label() {
 # The guarded apps' friendly names for notifications: "Claude and Signal".
 app_names() {
     local app out="" count=0 total
-    total="$(echo "${guarded_apps}" | wc -w)"
-    for app in ${guarded_apps}; do
+    # shellcheck disable=SC2086 # word-split the space-separated list
+    set -- ${guarded_apps}
+    total=$#
+    for app in "$@"; do
         count=$((count + 1))
         if [ "${count}" -eq 1 ]; then
             out="$(app_label "${app}")"
