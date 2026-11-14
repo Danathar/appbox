@@ -386,6 +386,10 @@ const blocked = [
     ['git -c core.pager=sh log', /run a program/],
     ['git -c remote.origin.url=https://x push origin fix', /redirect/],
     ['git config remote.origin.url https://example.com/x.git', /redirect/],
+    ['git config set remote.origin.url https://example.com/x.git', /redirect/],
+    ['git config unset credential.helper', /redirect/],
+    ['git config edit', /git config edit/],
+    ['git config edit --global', /git config edit/],
     ['git log --output=/var/tmp/x', /writes a file/],
     ['GIT_EXTERNAL_DIFF=sh git diff', /GIT_EXTERNAL_DIFF/],
     ['xargs git push origin', /xargs git/],
@@ -403,6 +407,10 @@ const blocked = [
     ['echo hi; distrobox rm apps', /distrobox rm/],
     ['true && podman rm -f apps', /apps/],
     ['echo $(distrobox rm apps)', /distrobox rm/],
+    // fish runs the script given to -c/--command and -C/--init-command
+    ['fish -c "distrobox rm apps"', /distrobox rm/],
+    ['fish --command="git push --force origin x"', /force/],
+    ["fish -C 'distrobox rm apps'", /distrobox rm/],
     ["cat <<'EOF' | bash\ndistrobox rm apps\nEOF", /distrobox rm/],
 ];
 
