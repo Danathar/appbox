@@ -85,9 +85,19 @@ esac
 force=0
 [ "${1:-}" = "--force" ] && force=1
 
+# One box per ini: `assemble create --replace` recreates every section and the
+# image rewrite below pins them all to the first box's image, so a second
+# section would be rebuilt from the wrong image without the open-app check.
+sections="$(sed -n '/^\[.*\]$/p' "${ini}" | sed -n '$=')"
+if [ "${sections:-0}" -gt 1 ]; then
+    echo "${ini} has ${sections} [sections]; appbox-update manages one box per ini. Keep one section in it." >&2
+    exit 1
+fi
+
 box="$(sed -n 's/^\[\(.*\)\]$/\1/p' "${ini}" | head -n 1)"
 image="$(sed -n 's/^image=//p' "${ini}" | head -n 1)"
 exported_apps="$(sed -n 's/^exported_apps=//p' "${ini}")"
+init_hooks="$(sed -n 's/^init_hooks=//p' "${ini}")"
 
 cosign="$(command -v cosign || true)"
 [ -n "${cosign}" ] || cosign=/home/linuxbrew/.linuxbrew/bin/cosign
@@ -122,6 +132,25 @@ app_label() {
         signal-desktop) echo "Signal" ;;
         *) echo "$1" ;;
     esac
+}
+
+# The guarded apps' friendly names for notifications: "Claude and Signal".
+app_names() {
+    local app out="" count=0 total
+    # shellcheck disable=SC2086 # word-split the space-separated list
+    set -- ${guarded_apps}
+    total=$#
+    for app in "$@"; do
+        count=$((count + 1))
+        if [ "${count}" -eq 1 ]; then
+            out="$(app_label "${app}")"
+        elif [ "${count}" -eq "${total}" ]; then
+            out="${out} and $(app_label "${app}")"
+        else
+            out="${out}, $(app_label "${app}")"
+        fi
+    done
+    echo "${out}"
 }
 
 # Run a command in the box, starting it first if needed.
@@ -174,10 +203,10 @@ nudge_skipped_rebuild() {
     marker="${state_dir}/nudged-$(podman inspect -f '{{.Id}}' "${box}" | cut -c1-12)"
     if [ "${age_days}" -ge $((max_age_days * 2)) ]; then
         notify "apps box is ${age_days} days old" \
-            "Quit Signal and Claude (tray > Quit), then run: systemctl --user start appbox-update"
+            "Quit $(app_names) (tray > Quit), then run: systemctl --user start appbox-update"
     elif [ ! -e "${marker}" ]; then
         notify "Weekly apps update is waiting" \
-            "It runs once Signal and Claude are closed (tray > Quit): on the next daily check, or right away with: systemctl --user start appbox-update"
+            "It runs once $(app_names) are closed (tray > Quit): on the next daily check, or right away with: systemctl --user start appbox-update"
         touch "${marker}"
     fi
     echo "Skipping rebuild: ${running} is running in '${box}'. Will retry next run."
@@ -219,17 +248,20 @@ rebuild_box() {
     trap 'rm -f "${tmp_ini}"' EXIT
     sed -e "s|^image=.*|image=${pinned}|" -e 's|^pull=.*|pull=false|' "${ini}" > "${tmp_ini}"
 
-    notify "Updating the apps box" "Signal and Claude will be back in a minute or two."
+    notify "Updating the apps box" "$(app_names) will be back in a minute or two."
     echo "Rebuilding '${box}' from ${pinned} (was ${age_days} day(s) old)"
     distrobox assemble create --replace --file "${tmp_ini}"
     rm -f "${state_dir}"/nudged-* "${state_dir}"/offered-*
 
-    # If the Claude Desktop install failed during init (flaky network), its
-    # launcher was not exported. Retry the install once, then export again.
+    # If an install failed during init (flaky network), its launcher was not
+    # exported. Retry the ini's init hook once (when it has one), then export
+    # again.
     for app in ${exported_apps}; do
         [ -e "${HOME}/.local/share/applications/${box}-$(basename "${app}")" ] && continue
         echo "Launcher for ${app} is missing; retrying install and export"
-        in_box sudo /usr/libexec/appbox/claude-desktop-sync || true
+        if [ -n "${init_hooks}" ]; then
+            in_box sudo sh -c "${init_hooks}" || true
+        fi
         in_box distrobox-export --app "${app}" || missing=1
     done
 
@@ -242,7 +274,7 @@ rebuild_box() {
         notify -u critical "apps box updated, but a launcher is missing" "See: journalctl --user -u appbox-update"
         exit 1
     fi
-    notify "apps box updated" "Signal and Claude are ready."
+    notify "apps box updated" "$(app_names) are ready."
 }
 
 # Upgrade each guarded app inside the box, but only while it is closed. An
