@@ -50,7 +50,8 @@ instead and say so in the PR.
 - If the app should block rebuilds while open and be upgraded in place
   between rebuilds, add it to `guarded_apps` in `host/appbox-update` (the name
   must be both the package name and the process name as `pgrep -x` sees it)
-  and give it a friendly name in `app_label`. Add bats cases for the new
+  and give it a friendly name in `app_label` (the notification texts follow
+  `guarded_apps` on their own). Add bats cases for the new
   entry in `tests/unit`. Otherwise it only updates with the weekly rebuild,
   which will close it if it is open; say that in the PR.
 - Machine impact: launchers appear after each machine's next recreate.

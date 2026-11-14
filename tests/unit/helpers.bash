@@ -260,6 +260,7 @@ case "$1" in
         cat "$STUB_STATE/candidate/$pkg" >"$STUB_STATE/installed/$pkg"
         ;;
       /usr/libexec/appbox/claude-desktop-sync) ;;
+      sh) ;; # sh -c "<init_hooks value>"
       distrobox-export)
         [ "${STUB_EXPORT_FAIL:-0}" = 1 ] && exit 1
         mkdir -p "$apps_dir"

@@ -271,7 +271,7 @@ assert_no_rebuild() {
   grep -Fxq "pull=false" "$STATE/assembled.ini"
   grep -Fxq "init_hooks=/usr/libexec/appbox/claude-desktop-sync" "$STATE/assembled.ini"
   [[ "$(calls)" == *"notify-send -a appbox -i system-software-update Updating the apps box"* ]]
-  [[ "$(calls)" == *"notify-send -a appbox -i system-software-update apps box updated Signal and Claude are ready."* ]]
+  [[ "$(calls)" == *"notify-send -a appbox -i system-software-update apps box updated Claude and Signal are ready."* ]]
 }
 
 @test "a successful rebuild exits 0 and removes its temporary ini" {
@@ -369,7 +369,7 @@ assert_no_rebuild() {
   [[ "$(calls)" == *"distrobox enter apps -- distrobox-export --app /usr/share/applications/com.anthropic.Claude.desktop"* ]]
   [[ "$(calls)" != *"--app /usr/share/applications/signal-desktop.desktop"* ]]
   [ -e "$HOME/.local/share/applications/apps-com.anthropic.Claude.desktop" ]
-  [[ "$(calls)" == *"apps box updated Signal and Claude are ready."* ]]
+  [[ "$(calls)" == *"apps box updated Claude and Signal are ready."* ]]
 }
 
 @test "a launcher that still cannot be exported fails the run with a critical notification" {
@@ -378,7 +378,7 @@ assert_no_rebuild() {
   run_update
   [ "$status" -eq 1 ]
   [[ "$(calls)" == *"notify-send -a appbox -i system-software-update -u critical apps box updated, but a launcher is missing"* ]]
-  [[ "$(calls)" != *"Signal and Claude are ready."* ]]
+  [[ "$(calls)" != *"Claude and Signal are ready."* ]]
 }
 
 # --- guarded apps block the rebuild ---------------------------------------
@@ -665,4 +665,57 @@ assert_no_rebuild() {
   run_update
   [ "$status" -eq 1 ]
   assert_no_rebuild
+}
+
+# --- one box per ini, init hook retry, notification texts -------------------
+
+@test "an ini with more than one section is refused before any podman or network call" {
+  printf '[apps]\nimage=ghcr.io/danathar/appbox:latest\n[work]\nimage=ghcr.io/example/other:latest\n' >"$REPO/hosts/testbox.ini"
+  host_env "APPBOX_INI=hosts/testbox.ini"
+  box_age_days 7
+  run_update --force
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$REPO/hosts/testbox.ini has 2 [sections]; appbox-update manages one box per ini"* ]]
+  [[ "$(calls)" != *"podman"* ]]
+  [[ "$(calls)" != *"distrobox"* ]]
+  [[ "$(calls)" != *"curl"* ]]
+}
+
+@test "a launcher missing after the rebuild retries the ini's own init hook" {
+  printf '%s\n' '[apps]' 'image=ghcr.io/danathar/appbox:latest' 'init_hooks=/usr/libexec/appbox/other-sync' \
+    'exported_apps=/usr/share/applications/other.desktop' >"$REPO/hosts/testbox.ini"
+  host_env "APPBOX_INI=hosts/testbox.ini"
+  box_age_days 7
+  export STUB_ASSEMBLE_MISSING="other.desktop"
+  run_update
+  assert_rebuild_exit
+  [[ "$(calls)" == *"distrobox enter apps -- sudo sh -c /usr/libexec/appbox/other-sync"* ]]
+  [[ "$(calls)" != *"claude-desktop-sync"* ]]
+  [[ "$(calls)" == *"distrobox-export --app /usr/share/applications/other.desktop"* ]]
+}
+
+@test "an ini without init_hooks only re-exports a missing launcher" {
+  printf '%s\n' '[apps]' 'image=ghcr.io/danathar/appbox:latest' \
+    'exported_apps=/usr/share/applications/signal-desktop.desktop' >"$REPO/hosts/testbox.ini"
+  host_env "APPBOX_INI=hosts/testbox.ini"
+  box_age_days 7
+  export STUB_ASSEMBLE_MISSING="signal-desktop.desktop"
+  run_update
+  assert_rebuild_exit
+  [[ "$(calls)" != *"sudo sh -c"* ]]
+  [[ "$(calls)" != *"claude-desktop-sync"* ]]
+  [[ "$(calls)" == *"distrobox-export --app /usr/share/applications/signal-desktop.desktop"* ]]
+}
+
+@test "the notification texts name the apps from guarded_apps" {
+  sed -i 's/^guarded_apps=.*/guarded_apps="signal-desktop claude-desktop foo-app"/' "$REPO/host/appbox-update"
+  box_age_days 14
+  export STUB_RUNNING="signal-desktop"
+  run_update --force
+  [[ "$(calls)" == *"Quit Signal, Claude and foo-app (tray > Quit)"* ]]
+  box_age_days 7
+  export STUB_RUNNING=""
+  run_update --force
+  [[ "$(calls)" == *"Updating the apps box Signal, Claude and foo-app will be back"* ]]
+  [[ "$(calls)" == *"apps box updated Signal, Claude and foo-app are ready."* ]]
 }
