@@ -127,7 +127,13 @@ jobs:
             exit 0
           fi
           printf 'Running %s\n' "${files[@]}"
-          node --test "${files[@]}"
+          mkdir -p coverage
+          node --test --experimental-test-coverage \
+            --test-coverage-include='.claude/hooks/guard-bash.mjs' \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=coverage/node.lcov \
+            "${files[@]}"
+          node scripts/coverage-gate.mjs --lcov coverage/node.lcov
 
   e2e:
     name: E2E (image build)
