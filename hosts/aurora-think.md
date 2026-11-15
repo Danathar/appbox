@@ -1,17 +1,18 @@
 # aurora-think (laptop)
 
-Setup record for the first host moved onto appbox, done 2026-11-07. It covers
-what was there before, what was changed, how the host is configured now, and
-what was learned along the way.
+Setup record for the first host moved onto appbox, done 2026-11-07, with its
+first week of running on its own (to 2026-11-15). It covers what was there
+before, what was changed, how the host is configured now, and what was
+learned along the way.
 
 ## Host
 
 | | |
 | --- | --- |
 | Hardware | Laptop, Intel UHD Graphics 620 (Kaby Lake-R). Lid is usually closed overnight. |
-| OS | Aurora DX, `ghcr.io/ublue-os/aurora-dx:stable`, 44.20261103.1, kernel 7.2.11 |
+| OS | Aurora DX, `ghcr.io/ublue-os/aurora-dx:stable`, 45.20261113.1 (upgraded from 44.20261103.1 on 2026-11-15), kernel 7.2.11-300.fc45 |
 | Desktop | KDE Plasma 6 on Wayland, KWallet 6 |
-| Tools | podman 5.8.9, distrobox 1.8.2.5, cosign v3.1.4 (Homebrew), gh logged in as Danathar |
+| Tools | podman 6.1.3 (5.8.9 at setup), distrobox 1.8.2.5, cosign v3.1.4 (Homebrew), gh logged in as Danathar |
 | OS updates | `uupd.timer` at 04:00, stages a new image, applied on reboot. Its distrobox module is disabled in `/etc/uupd/config.json`, so it does not touch the `apps` box. |
 
 ## Before
@@ -66,6 +67,49 @@ what was learned along the way.
    alone with a single notification and upgraded once closed; the 7- and
    14-day nudges fired as designed; and `notify-send` works from the systemd
    user service.
+
+## First week (2026-11-08 to 2026-11-15)
+
+The timer ran on Nov 8, 9, 11 and 15, each time right after the lid opened
+(days with no run were days the laptop was not opened). No run failed.
+
+- **Open apps were left alone, as designed.** Signal and Claude stayed open
+  from about Nov 9, so every run logged "available, but ... is running" and
+  notified once per new version: Claude 4.23118.1, 5.1231.2 and 5.11492.5,
+  Signal 8.35.0. On Nov 15 the box reached 8 days, the rebuild was skipped
+  because Signal was open, and the "Weekly apps update is waiting" nudge
+  fired.
+- **Self-update failed on every run.** Each run logged
+  `Could not resolve host: github.com` and carried on with `3f0a896`: the pull
+  ran before anything waited for the network, and right after resume DNS was
+  not up yet (the apt check a few seconds later worked). The checkout fell
+  44 commits behind `main`. Fixed in #124 (wait up to about two minutes for
+  the remote before pulling). Before pulling, the owner had the host-side
+  changes in those 44 commits reviewed: `host/appbox-update` (refuse a
+  multi-section ini, retry the ini's own init hook, notification names, and
+  #70, a fix for every successful rebuild exiting 1 and being re-run two
+  minutes later), a comment in `distrobox.ini`, and stricter
+  `.claude/settings.json` and Bash guard. `host/install`, the units, `hosts/`
+  and the box-start hook were unchanged.
+- **Aurora 44 to 45, 2026-11-15.** After the reboot (12:03), the first box
+  start (Signal launched at 12:04:54) ran the old image's box-start hook,
+  which still upgraded Claude in the background (4.23118.0 to 5.11492.5 at
+  12:05:16). Expected: that hook predates the install-only one, and only a
+  rebuild onto a newer image replaces it.
+- **Rebuild, 2026-11-15 12:21.** With the checkout pulled to `0ac5627` (#124)
+  and both apps quit, the owner ran `systemctl --user start appbox-update`.
+  It verified and rebuilt from
+  `ghcr.io/danathar/appbox@sha256:388b5a73eb43c782e7126376eaf2c8180cb40588218bfa2596110654af1321ee`
+  (built 2026-11-15 16:32 UTC) in 1 min 19 s, exited 0, re-exported both
+  launchers, removed the old image and cleared the notification state. The
+  new box has Signal 8.35.0, Claude 5.11492.5 and the install-only hook.
+- **Launcher icon lost after the rebuild.** "Claude (on apps)" showed the
+  wrong icon although its icon files and `Icon=claude-desktop` were correct
+  (Signal had done the same earlier, fixed then by a manual re-export).
+  Cause: the rebuild deletes and re-exports the icons while Plasma is running,
+  and Plasma kept its cached lookup. Fixed without re-exporting by
+  `dbus-send --session --type=signal /KIconLoader org.kde.KIconLoader.iconChanged int32:0`
+  and `kbuildsycoca6 --noincremental`. #125 makes every rebuild do this.
 
 ## Current configuration
 
@@ -141,3 +185,14 @@ These shaped the design and are worth knowing on the next host.
   Use `prctl(PR_SET_NAME)` instead.
 - On this host `ls` is aliased to `eza`, which hung once in a scripted call.
   Use `command ls` in scripts.
+- Anything on the network at the start of a lid-open run needs to wait for
+  the network: the timer fires the moment the laptop wakes. The image pull
+  always waited; the self-update pull did not until #124, and a failure there
+  is silent apart from the journal.
+- Check `git -C ~/claude/appbox status -sb` (after a `git fetch`) when
+  something looks stale: "behind N" means self-update is not working.
+- A rebuild deletes and re-adds the exported icons, and Plasma caches icon
+  lookups. A wrong launcher icon right after a rebuild is a cache problem,
+  not a broken export: reload Plasma's icons rather than re-exporting.
+- The first rebuild after a change to `scripts/claude-desktop-sync` is what
+  delivers it: until then the box keeps the hook from its old image.
