@@ -80,6 +80,8 @@ const allowed = [
     'git log --oneline -20',
     'git diff origin/main...HEAD',
     'git show HEAD:host/appbox-update',
+    // a --bare after the subcommand is not git's global option
+    'git log --oneline -- --bare',
     'git push -u origin acmm/agent-config',
     'git push origin feature-branch',
     'git push origin HEAD:refs/heads/fix-notify',
@@ -356,6 +358,23 @@ const blocked = [
     ['cat ~/.docker/config.json', /secret/],
     ['timeout 5 cat .env', /secret/],
     ["bash -c 'cat cosign.key'", /secret/],
+    // the option spellings of GIT_DIR / GIT_WORK_TREE: a named bare repository
+    // gets past safe.bareRepository=explicit, so its textconv program would run
+    ['git --git-dir=evil log -p -1', /--git-dir/],
+    ['git --git-dir evil show', /--git-dir/],
+    ['git --bare show', /--bare/],
+    ['git --bare log -p -1', /--bare/],
+    ['git --work-tree=/etc diff', /--work-tree/],
+    ['git --work-tree /etc status', /--work-tree/],
+    ['git --no-pager --git-dir=evil show', /--git-dir/],
+    ['git -c user.name=x --git-dir=evil log -p', /--git-dir/],
+    ['cd tests && git --git-dir=../evil show', /--git-dir/],
+    // a value-taking global option in front: its value must be skipped, not read
+    // as the subcommand, or the walk stops before reaching --git-dir
+    ['git -C . --git-dir=evil show', /--git-dir/],
+    ['git --namespace x --git-dir=evil show', /--git-dir/],
+    ['git --config-env user.name=V --git-dir=evil show', /--git-dir/],
+    ['git --work-tree=/etc diff --stat', /Run git from the project without it/],
     ['git show HEAD:.env', /secret/],
     ['git diff /dev/null ./.env', /secret/],
     // git
