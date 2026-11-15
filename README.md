@@ -112,8 +112,10 @@ The timer fires daily at 04:30 (after Aurora's own 04:00 `uupd` run). On a
 laptop that is asleep at that hour, it fires as soon as the lid opens. Each run
 of `host/appbox-update`:
 
-1. **Self-updates:** fast-forwards the repo checkout and, if that brought in
-   changes, re-runs the new version of itself. See
+1. **Self-updates:** waits up to about two minutes for the repo's remote to
+   answer (right after resume the network is often not up yet), fast-forwards
+   the repo checkout and, if that brought in changes, re-runs the new version
+   of itself. See
    [Managing machines centrally](#managing-machines-centrally).
 2. **Weekly rebuild:** once the box is at least 7 days old, rebuilds it from
    the latest signed image, unless a guarded app is open. A skipped rebuild is
@@ -171,8 +173,10 @@ pushed, not on the machines:
   recreate.
 - **The update script, units, and `distrobox.ini`** reach each machine on its
   next timer run, because the script fast-forwards its checkout first.
-  A pull that fails (offline, local edits, diverged history) is logged and the
-  run continues with what is checked out. Unit file changes take effect after
+  The script first waits up to about two minutes for the remote to answer, so
+  a laptop that has just woken up does not skip its update. A pull that still
+  fails (offline, local edits, diverged history) is logged and the run
+  continues with what is checked out. Unit file changes take effect after
   `systemctl --user daemon-reload` (re-run `host/install`).
 - **Per-machine settings** live in `hosts/<hostname>.env`, where `<hostname>`
   is `hostname -s`. Copy `hosts/example.env` to start one. Supported keys:

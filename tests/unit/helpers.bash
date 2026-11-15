@@ -133,6 +133,19 @@ case "$*" in
     h=$(cat "$head_file")
     echo "${h:0:7}"
     ;;
+  "ls-remote origin HEAD")
+    # STUB_GIT_REMOTE_UP_AFTER: how many ls-remote calls fail before the
+    # remote answers (default 0: answers at once; "never": never answers).
+    tries_file="$STUB_STATE/git-ls-remote-tries"
+    tries=$(($(cat "$tries_file" 2>/dev/null || echo 0) + 1))
+    echo "$tries" >"$tries_file"
+    up_after="${STUB_GIT_REMOTE_UP_AFTER:-0}"
+    if [ "$up_after" = never ] || [ "$tries" -le "$up_after" ]; then
+      echo "fatal: unable to access 'https://github.com/Danathar/appbox.git/': Could not resolve host: github.com" >&2
+      exit 128
+    fi
+    printf '%s\tHEAD\n' "$(cat "$head_file")"
+    ;;
   "pull --ff-only --quiet")
     echo "git-pull-env GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-unset}" >>"$STUB_CALLS"
     case "$STUB_GIT_PULL" in
