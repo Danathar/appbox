@@ -50,6 +50,8 @@ const allowed = [
     'sed -n 180,220p host/appbox-update',
     'grep -n rebuild_skipped host/appbox-update',
     'grep -rn cosign.key docs README.md',
+    'grep -f patterns.txt README.md',
+    'grep --regexp=cosign.key docs README.md',
     'less distrobox.ini',
     'cat hosts/example.env hosts/aurora-think.env',
     'cat cosign.pub keys/ublue-os-toolboxes.pub',
@@ -352,6 +354,11 @@ const blocked = [
     ['base64 -w0 cosign.key', /secret/],
     ['grep ENCRYPTED cosign.key', /secret/],
     ['grep -e foo .env', /secret/],
+    // -f reads its value as a pattern file; a joined -eFOO or --regexp=FOO is the
+    // pattern, so the next word is a file the program opens
+    ['grep -f .env README.md', /secret/],
+    ['grep -efoo cosign.key', /secret/],
+    ['grep --regexp=foo .env', /secret/],
     ['sed -n 1p cosign.key', /secret/],
     ['dd if=cosign.key bs=1 count=10', /secret/],
     ['cat *.key', /secret/],
