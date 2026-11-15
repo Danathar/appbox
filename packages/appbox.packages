@@ -1,2 +1,32 @@
-# Distro packages baked into the image, one per line.
-# Apps from third-party repos (Signal) are installed in scripts/appbox.sh.
+# Ubuntu packages baked into the appbox image, one package name per line.
+#
+# Only packages from Ubuntu's own archive go here (whatever
+# `apt-cache policy <name>` finds inside the box). Check a name first:
+#     distrobox enter apps -- apt-cache policy vlc
+# A "Candidate:" line with a version means it is in the archive.
+#
+# Format:
+#   - one package name per line, nothing else on the line;
+#   - lines starting with # and blank lines are ignored;
+#   - no comments after a name: `vlc  # video player` would hand "#",
+#     "video" and "player" to apt-get as package names and fail the build.
+#
+# Examples (remove the leading "# " to install one):
+# vlc
+# gimp
+# htop
+#
+# A GUI app also needs its launcher exported: add its .desktop file to
+# exported_apps in distrobox.ini, in a separate pull request that merges
+# only after the image with the package has built green. Find the file with
+#     distrobox enter apps -- dpkg -L vlc | grep '\.desktop$'
+# See "Adding an app" in README.md.
+#
+# Not in this file: apps from other places, like the two already in the box.
+#   - Signal Desktop comes from Signal's own apt repo. Its key, repo and
+#     `apt-get install signal-desktop` are in scripts/appbox.sh. Copy that
+#     block for another vendor repo whose license allows a public image.
+#   - Claude Desktop is proprietary, so it is never baked into the public
+#     image. scripts/appbox.sh only adds Anthropic's key and repo, and the
+#     box installs the app on first start with the init hook
+#     scripts/claude-desktop-sync (see init_hooks in distrobox.ini).
