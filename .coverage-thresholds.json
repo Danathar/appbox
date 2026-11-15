@@ -1,18 +1,27 @@
 {
-  "$comment": "Line-coverage floors for the host scripts under the bats unit tests (tests/unit), measured with kcov in a Fedora container by .github/workflows/coverage-gate.yml and enforced by scripts/coverage-gate.mjs. kcov measures only lines for Bash. The tests run each script from a scratch copy of the repo at one fixed path (APPBOX_TEST_REPO), so 'file' is matched as a path suffix in kcov's per-file list. Each floor sits a few points below the 'measured' number from the CI run named there; scripts/coverage-gate.mjs reads only 'floor'. kcov never credits an empty case arm or a 'done < file' line, so host/appbox-update cannot reach 100%. Floors only go up. Raising a floor makes the check catch more, so it is the 'Adding or widening a check' case in AGENTS.md's owner's standing decisions: an agent may raise one without asking. Lowering a floor, or exempting anything from it, needs the owner.",
+  "$comment": "Line-coverage floors for the host scripts under the bats unit tests (tests/unit), measured with kcov in a Fedora container by .github/workflows/coverage-gate.yml and enforced by scripts/coverage-gate.mjs. kcov measures only lines for Bash. The tests run each script from a scratch copy of the repo at one fixed path (APPBOX_TEST_REPO), so 'file' is matched as a path suffix in kcov's per-file list. Each floor sits a few points below the 'measured' number from the CI run named there; scripts/coverage-gate.mjs reads only 'floor'. kcov never credits an empty case arm or a 'done < file' line, so host/appbox-update cannot reach 100%. Floors only go up. Raising a floor makes the check catch more, so it is the 'Adding or widening a check' case in AGENTS.md's owner's standing decisions: an agent may raise one without asking. Lowering a floor, or exempting anything from it, needs the owner. 'ceiling.missing_lines' is the most lines the tests may leave unrun (total_lines - covered_lines), so new lines no test reaches fail the check even when the percentage barely moves. Ceilings follow the floors' rule the other way round: lowering one is routine; raising one needs a reason in the commit. 'lcov_areas' are checked by 'node scripts/coverage-gate.mjs --lcov <file>' against an lcov report from the node tests (.claude/hooks/guard-bash.mjs, in-process coverage only: the corpus rows that run the hook as a child process are not counted, so the count is high, never low).",
   "tool": "kcov",
   "areas": {
     "host/appbox-update": {
       "summary": "coverage/bats/coverage.json",
       "file": "host/appbox-update",
       "floor": { "lines": 95 },
+      "ceiling": { "missing_lines": 2 },
       "measured": { "lines": 97.92, "commit": "d98d2f8", "run": 43346007326 }
     },
     "host/install": {
       "summary": "coverage/bats/coverage.json",
       "file": "host/install",
       "floor": { "lines": 95 },
+      "ceiling": { "missing_lines": 0 },
       "measured": { "lines": 100, "commit": "d98d2f8", "run": 43346007326 }
+    }
+  },
+  "lcov_areas": {
+    ".claude/hooks/guard-bash.mjs": {
+      "file": ".claude/hooks/guard-bash.mjs",
+      "ceiling": { "missing_lines": 40 },
+      "measured": { "missing_lines": 40, "total_lines": 1273, "commit": "c8793ee", "node": "v26.12.0" }
     }
   }
 }
