@@ -152,7 +152,7 @@ the service retries every 2 minutes, up to 5 times an hour, like `uupd`. It
 pulls and verifies the image signature, then recreates the box from that
 exact verified digest with `pull=false`, so nothing touches the network after
 the old box is deleted except the Claude Desktop install (retried, with the
-launcher re-exported, if it fails). It then deletes the previous image. The
+launcher re-exported, if it fails). It then tells Plasma to reload its icons and launchers (the rebuild deletes and re-exports the launchers' icons, and a running Plasma would otherwise keep showing a missing icon), and deletes the previous image. The
 box is left stopped afterwards; the next launch starts it in about a second.
 
 Other details:

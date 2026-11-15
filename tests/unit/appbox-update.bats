@@ -316,6 +316,43 @@ assert_no_rebuild() {
   [ -z "$(ls -A "$SCRIPT_TMP")" ]
 }
 
+@test "a rebuild tells Plasma to reload icons and launchers after exporting" {
+  box_age_days 7
+  run_update
+  assert_rebuild_exit
+  [[ "$(calls)" == *"dbus-send --session --type=signal /KIconLoader org.kde.KIconLoader.iconChanged int32:0"* ]]
+  [[ "$(calls)" == *"kbuildsycoca6"* ]]
+  local assemble refresh
+  assemble=$(grep -n 'distrobox assemble' "$CALLS" | cut -d: -f1)
+  refresh=$(grep -n '^dbus-send' "$CALLS" | cut -d: -f1)
+  [ "$assemble" -lt "$refresh" ]
+}
+
+@test "a failed icon refresh does not fail the rebuild" {
+  box_age_days 7
+  export STUB_DESKTOP_FAIL=1
+  run_update
+  assert_rebuild_exit
+  [[ "$(calls)" == *"apps box updated"* ]]
+}
+
+@test "a desktop without dbus-send or kbuildsycoca6 still rebuilds" {
+  box_age_days 7
+  rm -f "$STUBS/dbus-send" "$STUBS/kbuildsycoca6"
+  run_update
+  assert_rebuild_exit
+  [[ "$(calls)" == *"apps box updated"* ]]
+}
+
+@test "in-place upgrades do not refresh desktop caches" {
+  box_age_days 1
+  candidate signal-desktop 7.1.0
+  run_update
+  [ "$status" -eq 0 ]
+  [[ "$(calls)" != *"dbus-send"* ]]
+  [[ "$(calls)" != *"kbuildsycoca6"* ]]
+}
+
 @test "the order is pull, verify, then replace the box" {
   box_age_days 8
   run_update

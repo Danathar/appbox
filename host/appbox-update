@@ -228,6 +228,24 @@ nudge_skipped_rebuild() {
     echo "Skipping rebuild: ${running} is running in '${box}'. Will retry next run."
 }
 
+# Plasma caches icon lookups. `distrobox assemble --replace` first runs
+# `distrobox rm`, which deletes the box's exported icons from
+# ~/.local/share/icons, and the export copies them back seconds later, so a
+# running Plasma kept showing a missing icon for the launchers until it was
+# told to reload (seen on aurora-think after the 2026-11-15 rebuild). Best
+# effort: nothing here may fail the run, and on desktops without these
+# commands they are simply skipped.
+refresh_desktop_caches() {
+    touch "${HOME}/.local/share/icons/hicolor" 2> /dev/null || true
+    if command -v dbus-send > /dev/null; then
+        dbus-send --session --type=signal /KIconLoader \
+            org.kde.KIconLoader.iconChanged int32:0 2> /dev/null || true
+    fi
+    if command -v kbuildsycoca6 > /dev/null; then
+        kbuildsycoca6 > /dev/null 2>&1 || true
+    fi
+}
+
 # Rebuild the box from the latest verified image. Sets rebuild_skipped=1 if an
 # app started while pulling, so the caller can fall back to in-place upgrades.
 # (A flag, not a return code: calling this as `rebuild_box && ...` would turn
@@ -280,6 +298,7 @@ rebuild_box() {
         fi
         in_box distrobox-export --app "${app}" || missing=1
     done
+    refresh_desktop_caches
 
     # Drop the previous image if nothing else uses it.
     if [ "${old_image}" != "$(podman inspect -f '{{.Image}}' "${box}")" ]; then
