@@ -51,11 +51,27 @@ load_host_config() {
 }
 load_host_config
 
+# Right after a laptop resumes, DNS may not be up yet, and a pull that fails
+# then leaves the machine on its old checkout until the next run. (On
+# aurora-think it failed on every lid-open run for a week, with "Could not
+# resolve host: github.com", while the apt check a few seconds later worked.)
+# Wait up to about two minutes for the remote to answer. If it never does,
+# try the pull anyway: its failure is logged and the run carries on.
+wait_for_remote() {
+    local i
+    for i in $(seq 12); do
+        GIT_TERMINAL_PROMPT=0 timeout 10 git -C "${repo_dir}" ls-remote origin HEAD > /dev/null 2>&1 && return 0
+        [ "${i}" -lt 12 ] && sleep 5
+    done
+    echo "The checkout's remote did not answer after waiting; trying the pull anyway" >&2
+}
+
 # Fast-forward the checkout, then re-run the (possibly new) script once. A
 # failed pull (offline, local edits, diverged branch) is not fatal: the run
 # continues with what is checked out.
 if [ "${APPBOX_SELF_UPDATE:-1}" = "1" ] && [ -z "${APPBOX_REEXECED:-}" ] &&
     [ "${1:-}" != "--show-config" ]; then
+    wait_for_remote
     before="$(git -C "${repo_dir}" rev-parse HEAD)"
     if GIT_TERMINAL_PROMPT=0 timeout 60 git -C "${repo_dir}" pull --ff-only --quiet; then
         after="$(git -C "${repo_dir}" rev-parse HEAD)"

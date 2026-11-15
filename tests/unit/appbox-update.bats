@@ -221,11 +221,46 @@ assert_no_rebuild() {
   [[ "$output" == *"Upgrading signal-desktop 7.0.0 -> 7.1.0"* ]]
 }
 
+@test "self-update checks the remote answers before pulling, without waiting when it does" {
+  run_update
+  [ "$status" -eq 0 ]
+  [[ "$(calls)" == *"timeout 10 git -C $REPO ls-remote origin HEAD"* ]]
+  [ "$(count_calls '^git .* ls-remote origin HEAD')" -eq 1 ]
+  [[ "$(calls)" != *"sleep 5"* ]]
+  # The check comes before the pull.
+  first_ls=$(grep -n 'ls-remote origin HEAD' "$CALLS" | head -1 | cut -d: -f1)
+  first_pull=$(grep -n 'pull --ff-only' "$CALLS" | head -1 | cut -d: -f1)
+  [ "$first_ls" -lt "$first_pull" ]
+}
+
+@test "self-update waits for a remote that is not reachable yet, then pulls" {
+  export STUB_GIT_REMOTE_UP_AFTER=2 STUB_GIT_PULL=advance
+  run_update
+  [ "$(count_calls '^git .* ls-remote origin HEAD')" -eq 3 ]
+  [ "$(count_calls '^sleep 5$')" -eq 2 ]
+  [[ "$output" == *"Updated checkout aaaaaaa..bbbbbbb; re-running"* ]]
+  [[ "$output" != *"did not answer"* ]]
+}
+
+@test "a remote that never answers is tried 12 times, then the pull is attempted and the run carries on" {
+  export STUB_GIT_REMOTE_UP_AFTER=never STUB_GIT_PULL=fail
+  candidate signal-desktop 7.1.0
+  run_update
+  [ "$status" -eq 0 ]
+  [ "$(count_calls '^git .* ls-remote origin HEAD')" -eq 12 ]
+  [ "$(count_calls '^sleep 5$')" -eq 11 ]
+  [[ "$output" == *"did not answer after waiting; trying the pull anyway"* ]]
+  [ "$(count_calls '^git .* pull --ff-only')" -eq 1 ]
+  [[ "$output" == *"Could not update $REPO; continuing with aaaaaaa"* ]]
+  [[ "$output" == *"Upgrading signal-desktop 7.0.0 -> 7.1.0"* ]]
+}
+
 @test "APPBOX_SELF_UPDATE=0 in the settings file skips the pull" {
   host_env "APPBOX_SELF_UPDATE=0"
   run_update
   [ "$status" -eq 0 ]
   [[ "$(calls)" != *"pull --ff-only"* ]]
+  [[ "$(calls)" != *"ls-remote"* ]]
 }
 
 @test "a re-executed run does not pull again" {
