@@ -329,6 +329,15 @@ S
 #!/usr/bin/env bash
 echo "sleep $*" >>"$STUB_CALLS"
 S
+  # Plasma's icon and application caches, refreshed after a rebuild.
+  # STUB_DESKTOP_FAIL=1 makes both fail, as with no session bus.
+  for tool in dbus-send kbuildsycoca6; do
+    cat >"$STUBS/$tool" <<S
+#!/usr/bin/env bash
+echo "$tool \$*" >>"\$STUB_CALLS"
+[ "\${STUB_DESKTOP_FAIL:-0}" != 1 ]
+S
+  done
   # STUB_NOTIFY_FAIL=1 fakes a machine with no desktop session to notify.
   cat >"$STUBS/notify-send" <<'S'
 #!/usr/bin/env bash
