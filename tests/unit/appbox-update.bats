@@ -328,6 +328,23 @@ assert_no_rebuild() {
   [ "$assemble" -lt "$refresh" ]
 }
 
+@test "the icon refresh never creates hicolor when it is missing" {
+  box_age_days 7
+  mkdir -p "$HOME/.local/share/icons"
+  run_update
+  assert_rebuild_exit
+  [ ! -e "$HOME/.local/share/icons/hicolor" ]
+}
+
+@test "the icon refresh bumps the hicolor directory's mtime" {
+  box_age_days 7
+  mkdir -p "$HOME/.local/share/icons/hicolor"
+  touch -d '2000-01-01' "$HOME/.local/share/icons/hicolor"
+  run_update
+  assert_rebuild_exit
+  [ "$(stat -c %Y "$HOME/.local/share/icons/hicolor")" -gt 946771200 ]
+}
+
 @test "a failed icon refresh does not fail the rebuild" {
   box_age_days 7
   export STUB_DESKTOP_FAIL=1
