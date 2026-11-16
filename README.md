@@ -184,6 +184,11 @@ pushed, not on the machines:
   example `hosts/<hostname>.ini` with extra apps), and `APPBOX_SELF_UPDATE`
   (set `0` on a checkout you develop in). The file is parsed as plain
   `KEY=VALUE`, never executed. A machine without a file uses the defaults.
+- **Signature key.** `APPBOX_PUBKEY` is the public key `cosign verify` uses to
+  check the image before the box is rebuilt (default `cosign.pub` in the
+  checkout). It is not a `hosts/<hostname>.env` key (the file ignores it with
+  a warning); set it in the service environment, for example a systemd
+  drop-in. `host/appbox-update --show-config` prints the key in use.
 - **Setup records** live next to the settings, in `hosts/<hostname>.md`: what
   the machine is, what was migrated, and anything specific to it.
 
