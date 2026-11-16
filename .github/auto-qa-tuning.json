@@ -2,7 +2,7 @@
     "$comment": "Self-tuning values for the scheduled checks. nightly.* is read by .github/workflows/nightly-compliance.yml on every run. scripts/auto-qa-tuner.mjs (.github/workflows/auto-qa.yml, weekly) reads what the last nightly runs measured and proposes new values, always inside each value's min and max. It never commits: a proposal goes into one tracking issue and a person or agent applies it in a pull request. rules.* controls the tuner itself and is not tuned.",
     "nightly": {
         "image_max_age_days": {
-            "value": 3,
+            "value": 2,
             "min": 2,
             "max": 7,
             "note": "The nightly fails when ghcr.io/danathar/appbox:latest was created more than this many days ago. build-appbox runs daily, so a healthy image is less than a day old when the nightly checks it. The tuner moves it one day per week toward the observed rules.age_percentile age, rounded up to whole days, plus rules.age_slack_days."
