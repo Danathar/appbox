@@ -236,7 +236,9 @@ nudge_skipped_rebuild() {
 # effort: nothing here may fail the run, and on desktops without these
 # commands they are simply skipped.
 refresh_desktop_caches() {
-    touch "${HOME}/.local/share/icons/hicolor" 2> /dev/null || true
+    # -c: only bump a hicolor that exists. Without it a missing hicolor would
+    # become an empty regular file and block the next icon export.
+    touch -c "${HOME}/.local/share/icons/hicolor" 2> /dev/null || true
     if command -v dbus-send > /dev/null; then
         dbus-send --session --type=signal /KIconLoader \
             org.kde.KIconLoader.iconChanged int32:0 2> /dev/null || true
