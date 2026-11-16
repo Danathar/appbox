@@ -20,8 +20,8 @@
   "lcov_areas": {
     ".claude/hooks/guard-bash.mjs": {
       "file": ".claude/hooks/guard-bash.mjs",
-      "ceiling": { "missing_lines": 37 },
-      "measured": { "missing_lines": 37, "total_lines": 1273, "commit": "45f0831 + guard grep tests", "node": "v26.12.0" }
+      "ceiling": { "missing_lines": 32 },
+      "measured": { "missing_lines": 32, "total_lines": 1273, "commit": "d003521", "node": "v26.13.1", "run": 43883715091 }
     }
   }
 }
