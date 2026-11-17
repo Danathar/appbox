@@ -275,7 +275,7 @@ jobs:
       # would allow writes anywhere on the runner.
       - name: Apply verified fixes
         if: steps.target.outputs.proceed == 'true' && steps.auth.outputs.configured == 'true'
-        uses: anthropics/claude-code-action@cc98b3ae241b0fcfb6a42a2690751afffecb4452 # v1.0.278
+        uses: anthropics/claude-code-action@469588f42e6b1e94cd14ad09dccfeaec772ce0fd # v1.0.280
         env:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
         with:
