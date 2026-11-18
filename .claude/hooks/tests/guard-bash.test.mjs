@@ -84,6 +84,8 @@ const allowed = [
     'git show HEAD:host/appbox-update',
     // a --bare after the subcommand is not git's global option
     'git log --oneline -- --bare',
+    // only a key in the safe.* section is refused, not one that merely contains it
+    'git -c branch.unsafe.merge=x status',
     'git push -u origin acmm/agent-config',
     'git push origin feature-branch',
     'git push origin HEAD:refs/heads/fix-notify',
@@ -409,6 +411,17 @@ const blocked = [
     ['git reset --hard', /reset --hard/],
     ['git -C ~/claude/appbox fetch && git -C ~/claude/appbox reset --hard origin/main', /reset --hard/],
     ['git filter-branch --tree-filter x HEAD', /rewrites history/],
+    // `-c` / `--config-env` would override the safe.bareRepository=explicit
+    // settings env, so a discovered bare repository's textconv would run again
+    ['git -c safe.bareRepository=all -C evil log -p -1', /safe\.bareRepository/],
+    ['git -c safe.bareRepository=all show', /safe\.bareRepository/],
+    ['git -c SAFE.BAREREPOSITORY=all show', /SAFE\.BAREREPOSITORY/],
+    ['git -c safe.directory=x -C evil show', /safe\.directory/],
+    ['SBR=all git --config-env=safe.bareRepository=SBR -C evil show', /safe\.bareRepository/],
+    ['git --config-env safe.bareRepository=SBR show', /safe\.bareRepository/],
+    ['cd tests && git -c safe.bareRepository=all show', /safe\.bareRepository/],
+    ['git -c user.name=x -c safe.bareRepository=all show', /safe\.bareRepository/],
+    ['git -c safe.bareRepository=all log -p', /Run git without it/],
     ['git -c core.pager=sh log', /run a program/],
     ['git -c remote.origin.url=https://x push origin fix', /redirect/],
     ['git config remote.origin.url https://example.com/x.git', /redirect/],
