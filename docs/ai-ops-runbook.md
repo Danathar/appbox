@@ -86,7 +86,7 @@ yet.
 | `ci.yml`                 | shellcheck, bats unit tests, node tests and the e2e image build; its aggregate job `test` is the required check |
 | `coverage-gate.yml`      | fails when shell coverage under the bats tests drops below `.coverage-thresholds.json`                          |
 | `policy-check.yml`       | runs `scripts/check-policies.mjs` and its tests ([policies](../policies/README.md))                             |
-| `labeler.yml`            | labels pull requests by the paths they touch (`.github/labeler.yml`)                                            |
+| `labeler.yml`            | labels pull requests by the paths they touch (`.github/labeler.yml`); skips pull requests from forks            |
 | `nightly-compliance.yml` | re-runs the checks against `main` every night and reports failures in one tracking issue                        |
 | `auto-issues.yml`        | opens or updates a tracking issue when a run on `main` fails                                                    |
 | `agent-audit.yml`        | checks merged agent pull requests for a linked issue, a signature line and the expected merger                  |

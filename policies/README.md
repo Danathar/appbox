@@ -43,8 +43,10 @@ For every `.github/workflows/*.yml`:
 - **Every `uses:` is pinned** to a 40-character commit SHA with the tag in a
   trailing comment (`uses: actions/checkout@<sha> # v7.0.1`), including
   `actions/*`. Local `./` and `docker://` references are skipped.
-- **`pull_request_target`** may be used (a labeler commonly does, so pull
-  requests from forks can be labeled), but such a workflow must not reference the pull request head:
+- **`pull_request_target`** may be used (no workflow here does today:
+  `labeler.yml` runs on `pull_request`, because GitHub blocks
+  `pull_request_target` in public repositories by default from 2026-12-02),
+  but such a workflow must not reference the pull request head:
   no `github.event.pull_request.head.sha|ref|repo`, `github.head_ref`,
   `refs/pull/` or `merge_commit_sha`, in any casing and with bracket access
   (`github['event']['pull_request']['head']['sha']`) normalized first. It runs with a write token, so checking
