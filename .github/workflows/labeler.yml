@@ -1,13 +1,33 @@
 # Labels pull requests by the paths they change, using .github/labeler.yml.
 #
-# Trigger: pull_request_target, so that pull requests from forks are labelled
-# too (under pull_request a fork gets a read-only token and labelling fails).
-# This trigger runs with a write-capable token in the context of the base
-# branch, which is only safe because this workflow never checks out or runs
-# any code from the pull request: actions/labeler reads the list of changed
-# files and .github/labeler.yml through the API, and the config it reads is
-# the one on main, not the PR's copy. Keep it that way: do not add a checkout
-# step or any step that runs PR content to this workflow.
+# Trigger: pull_request, not pull_request_target. From 2026-12-02 GitHub no
+# longer runs pull_request_target workflows in public repositories unless a
+# repository event policy allows them
+# (https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2).
+# The hive's GitHub App cannot create those policies: its owner refused it the
+# Administration permission that would need, for security reasons, and the
+# alternative is a policy made by hand in every repository. The labeler never
+# needed pull_request_target anyway. actions/labeler only reads the list of
+# changed files and .github/labeler.yml through the API, and under
+# pull_request a pull request from a branch of this repository gets a write
+# token as long as the job's permissions grant pull-requests: write.
+# Dependabot pull requests included: GitHub's docs ("Changing GITHUB_TOKEN
+# permissions" in the Dependabot on Actions troubleshooting page) say their
+# workflows start read-only and the permissions key can raise that.
+#
+# Pull requests from forks get a read-only token under pull_request, so
+# labelling them would fail. The job's if: skips them instead, which shows a
+# grey skipped run rather than a red one. None of this repository's pull
+# requests so far (71 when this changed) came from a fork, so this costs
+# nothing in practice.
+#
+# Under pull_request the config is read from the pull request's own merge
+# commit, not from main, so a pull request that changes .github/labeler.yml
+# is labelled by its own copy. That is acceptable: only branches of this
+# repository run, and their authors already have write access.
+#
+# Do not add a checkout step or any step that runs pull request content to
+# this workflow: it holds a write token.
 #
 # The labels are listed in .github/labeler.yml. sync-labels removes a label
 # from the map when a later push stops touching its paths.
@@ -15,7 +35,7 @@
 name: Labeler
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened]
 
 concurrency:
@@ -27,6 +47,7 @@ permissions: {}
 jobs:
   label:
     name: Label by path
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
