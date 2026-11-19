@@ -58,6 +58,9 @@ const allowed = [
     'cat ~/.ssh/id_ed25519.pub',
     'jq . .claude/settings.json',
     'actionlint',
+    // env's own options, with the wrapped command left alone
+    'env -u APPBOX_X ls docs',
+    "env -S 'ls docs'",
     'actionlint -color',
     'actionlint -shellcheck= .github/workflows/ci.yml',
     'actionlint -pyflakes=',
