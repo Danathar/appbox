@@ -108,6 +108,14 @@
 //     a program, and options that turn a pre-approved read (git diff/log/show)
 //     into a file write or program run (--output, --no-index, --ext-diff, ...).
 //   - git diff/show/log/blame/grep/cat-file naming a secret file.
+//   - `git --shallow-file FILE`, which reads FILE and can print its first line.
+//   - Removing or overwriting the GIT_CONFIG_* variables that .claude/
+//     settings.json uses to set safe.bareRepository=explicit: `unset`,
+//     `export -n`, `declare`/`typeset`/`local +x`, `env -u`/`--unset` naming
+//     one, a `GIT_CONFIG_*=...` statement or such an operand of declare/
+//     typeset/local/readonly; and git run behind `env -i`,
+//     `--ignore-environment`, a lone `-`, or `exec -c`, which empty its
+//     environment.
 //   node
 //   - `node --test` with options outside the test-runner allowlist, and node
 //     with NODE_OPTIONS or another NODE_* variable set.
@@ -358,6 +366,45 @@ function checkActionlint(args) {
 // git
 // ---------------------------------------------------------------------------
 
+// git's global options that take their value as the next word. The walk that
+// looks for the subcommand skips that word, so `git --attr-source X log` is
+// read as `log`, not `X`, and an option after the value is still vetted.
+// `--super-prefix` is gone from git 2.42+, but older git still reads it this
+// way. checkGit refuses `--shallow-file` before the walk reaches it.
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = [
+    '-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--attr-source', '--super-prefix',
+    '--shallow-file',
+];
+
+// .claude/settings.json sets safe.bareRepository=explicit through
+// GIT_CONFIG_COUNT / GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0. Removing any of
+// them (`unset`, `env -u`) puts git back on its default, and a committed bare
+// repository's diff.*.textconv runs again. A name is refused when it contains
+// GIT_CONFIG, and so is any word bash rewrites before unset or env sees it
+// (`${!GIT_CONFIG@}`, `$v`, a glob): only a plain word of letters, digits,
+// `_` and `-` (a name or an option) passes.
+function removesSettingsEnv(name) {
+    return name.includes('GIT_CONFIG') || /[^\w-]/.test(name);
+}
+
+function blockSettingsEnvRemoval(what) {
+    return block(
+        `Blocked: \`${what}\` can remove the GIT_CONFIG_* settings env in .claude/settings.json that stops a ` +
+            'committed repository folder from running a program. Leave it set.'
+    );
+}
+
+// A bare `GIT_CONFIG_COUNT=0` statement, or `declare GIT_CONFIG_VALUE_0=all`,
+// changes the value and keeps the variable exported, so git reads the new
+// value: the same effect as removing it.
+function blockSettingsEnvOverwrite(what) {
+    return block(
+        `Blocked: \`${what}\` overwrites the GIT_CONFIG_* settings env in .claude/settings.json that stops a ` +
+            'committed repository folder from running a program; the variable stays exported, so git reads the ' +
+            'new value. Leave it set.'
+    );
+}
+
 function checkGit(args, inlineEnv = {}, exported = {}) {
     let i = 0;
     while (i < args.length && args[i].startsWith('-')) {
@@ -393,7 +440,13 @@ function checkGit(args, inlineEnv = {}, exported = {}) {
                     'whose config can make git run a program. Run git from the project without it.'
             );
         }
-        i += ['-C', '-c', '--namespace', '--config-env'].includes(a) ? 2 : 1;
+        // `git --shallow-file FILE` reads FILE, a path the index need not hold,
+        // and prints its first line when it is not a list of commits
+        // (`--shallow-file .env`). Ordinary work never needs it.
+        if (a === '--shallow-file' || a.startsWith('--shallow-file=')) {
+            return block('Blocked: `git --shallow-file FILE` makes git read FILE and can print its first line.');
+        }
+        i += GIT_GLOBAL_OPTIONS_WITH_VALUE.includes(a) ? 2 : 1;
     }
     const sub = args[i];
     const rest = args.slice(i + 1);
@@ -1087,6 +1140,9 @@ function checkSegment(words, state) {
             for (const [name, value] of Object.entries(inlineEnv)) {
                 if (wordHasAppPids(value, state)) (state.appPidVars ??= new Set()).add(name);
             }
+            // Only assignments: they set shell variables, and an exported one keeps its export.
+            const name = Object.keys(inlineEnv).find((k) => k.includes('GIT_CONFIG'));
+            if (name !== undefined) return blockSettingsEnvOverwrite(`${name}=${inlineEnv[name]}`);
             return null;
         }
         // A command name the shell builds with braces or wildcards: brace groups
@@ -1113,6 +1169,24 @@ function checkSegment(words, state) {
                 const a = w[k];
                 if (isAssignment(a)) continue;
                 if (!a.startsWith('-')) break;
+                // `env -u GIT_CONFIG_COUNT git ...` removes the GIT_CONFIG_*
+                // settings env (.claude/settings.json) for the command it runs.
+                const unsetName =
+                    a === '-u' || a === '--unset'
+                        ? (w[k + 1] ?? '')
+                        : /^-u./.test(a)
+                          ? a.slice(2)
+                          : a.startsWith('--unset=')
+                            ? a.slice(8)
+                            : undefined;
+                if (unsetName !== undefined && removesSettingsEnv(unsetName)) {
+                    return blockSettingsEnvRemoval(`env -u ${unsetName}`);
+                }
+                // `env -i` / `--ignore-environment` / a lone `-` drop the whole
+                // environment, the settings env with it; git is refused below.
+                if (a === '-i' || a === '--ignore-environment' || a === '-') {
+                    state = Object.assign(Object.create(state), { envCleared: true });
+                }
                 if (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(a)) {
                     k++;
                     continue;
@@ -1127,7 +1201,19 @@ function checkSegment(words, state) {
                 if (script === null) continue;
                 const alone = checkCommand(script, state);
                 if (alone) return alone;
-                return checkSegment([...tokenize(script).flat(), ...w.slice(rest)], state);
+                const head = tokenize(script).flat();
+                // An option at the start of the string is an env option
+                // (`env --split-string '-i git log'`), so check it with env in front.
+                if (head.length && head[0].startsWith('-')) return checkSegment(['env', ...head, ...w.slice(rest)], state);
+                return checkSegment([...head, ...w.slice(rest)], state);
+            }
+        }
+        // bash's `exec -c` clears the environment just as `env -i` does.
+        // The options are already one letter each (`exec -cl` is `-c -l`).
+        if (cmd === 'exec') {
+            for (let k = 1; k < w.length && w[k].startsWith('-') && w[k] !== '--'; k++) {
+                if (w[k] === '-a') k++;
+                else if (w[k] === '-c') state = Object.assign(Object.create(state), { envCleared: true });
             }
         }
         const idx = wrapperTarget(w);
@@ -1156,6 +1242,29 @@ function checkSegment(words, state) {
     if (xargsFed && REMOVERS.has(cmd)) {
         const r = checkFedRemover(cmd, words);
         if (r) return r;
+    }
+    // `export -n NAME` and `declare +x NAME` un-export NAME, and an operand
+    // that assigns (`declare GIT_CONFIG_COUNT=0`, `readonly ...`) overwrites it.
+    // An export (`export NAME=`, `declare -x NAME=`) is recorded below instead,
+    // and the git that follows is refused by checkGit().
+    if (['export', 'declare', 'typeset', 'local', 'readonly'].includes(cmd)) {
+        const unexports = args.some((a) => (cmd === 'export' && /^-[a-zA-Z]*n/.test(a)) || /^\+[a-zA-Z]*x/.test(a));
+        const exports = cmd === 'export' || args.some((a) => /^-[a-zA-Z]*x/.test(a));
+        for (const a of args) {
+            if (a.startsWith('-') || a.startsWith('+')) continue;
+            const eq = a.indexOf('=');
+            if (!exports && eq !== -1 && a.slice(0, eq).includes('GIT_CONFIG')) return blockSettingsEnvOverwrite(`${cmd} ${a}`);
+            if (unexports && removesSettingsEnv(eq === -1 ? a : a.slice(0, eq))) {
+                const flags = args.filter((o) => o.startsWith('-') || o.startsWith('+'));
+                return blockSettingsEnvRemoval([cmd, ...flags, a].join(' '));
+            }
+        }
+    }
+    // `unset GIT_CONFIG_COUNT` removes the settings env for every later command,
+    // and so do `unset ${!GIT_CONFIG@}` and `v=GIT_CONFIG_COUNT; unset $v`.
+    if (cmd === 'unset') {
+        const name = args.find(removesSettingsEnv);
+        if (name !== undefined) return blockSettingsEnvRemoval(`unset ${name}`);
     }
     if (cmd === 'export' || ((cmd === 'declare' || cmd === 'typeset') && args.some((a) => /^-[a-zA-Z]*x/.test(a)))) {
         for (const a of args) {
@@ -1191,7 +1300,15 @@ function checkSegment(words, state) {
         const r = checkReader(cmd, args, stdinFrom);
         if (r) return r;
     }
-    if (cmd === 'git') return checkGit(args, inlineEnv, state.exportedEnv ?? {});
+    if (cmd === 'git') {
+        const refusal = checkGit(args, inlineEnv, state.exportedEnv ?? {});
+        if (refusal || !state.envCleared) return refusal;
+        return block(
+            'Blocked: `env -i` (`--ignore-environment`, a lone `-`) and `exec -c` run git without the GIT_CONFIG_* ' +
+                'settings env in .claude/settings.json that stops a committed repository folder from running a ' +
+                'program. Run git without clearing the environment.'
+        );
+    }
     if (cmd === 'node' || cmd === 'nodejs') return checkNode(cmd, args, { ...(state.exportedEnv ?? {}), ...inlineEnv });
     if (SHELLS.has(cmd)) return checkShell(cmd, args, words, state);
     if (cmd === 'eval') return checkCommand(args.join(' '), Object.create(state));
