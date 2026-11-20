@@ -12,13 +12,17 @@
 //   * no step checks out or runs pull request content under the write token;
 //   * the action stays pinned to a full commit SHA;
 //   * .github/labeler.yml never attaches a label something outside the repo
-//     reads as an approval (quality, security, testing, hive/*, agent/*).
+//     reads as an approval (quality, security, testing, hive/*, agent/*);
+//   * every path glob in .github/labeler.yml matches a tracked file, because a
+//     rule for a path that was renamed or never existed can never fire and
+//     sync-labels hides the gap.
 //
 // The workflow is read as text with comments stripped (yamlCode, the same
 // reader scripts/check-policies.mjs uses), so the repository needs no YAML
 // dependency for this.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { yamlCode } from '../check-policies.mjs';
@@ -87,4 +91,84 @@ test('labeler.yml attaches no label read as an approval outside the repository',
         assert.ok(!['quality', 'security', 'testing'].includes(label), `${label} is an approval label`);
         assert.ok(!/^(?:hive|agent)\//.test(label), `${label} is in an approval namespace`);
     }
+});
+
+// The labeler matches with minimatch, dotfiles included: `*` and `?` stop at a
+// slash, `**` crosses slashes, and a leading `**/` also matches the root.
+function globToRegExp(glob) {
+    let re = '';
+    for (let i = 0; i < glob.length; i++) {
+        const ch = glob[i];
+        if (ch === '*') {
+            if (glob.startsWith('**/', i)) {
+                re += '(?:.*/)?';
+                i += 2;
+            } else if (glob.startsWith('**', i)) {
+                re += '.*';
+                i += 1;
+            } else {
+                re += '[^/]*';
+            }
+        } else if (ch === '?') {
+            re += '[^/]';
+        } else {
+            re += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        }
+    }
+    return new RegExp(`^${re}$`);
+}
+
+/** Every glob listed under any-glob-to-any-file / any-glob-to-all-files. */
+function globsOf(configLines) {
+    const globs = [];
+    for (const l of configLines) {
+        const inline = l.match(/^\s+any-glob-to-(?:any|all)-files?\s*:\s+(\S.*)$/);
+        const item = l.match(/^\s+-\s+(\S.*)$/);
+        const raw = inline ? inline[1] : item && !item[1].trimEnd().endsWith(':') ? item[1] : null;
+        if (raw !== null) globs.push(raw.trim().replace(/^(['"])(.*)\1$/, '$2'));
+    }
+    return globs;
+}
+
+const deadGlobs = (configLines, files) =>
+    globsOf(configLines).filter((glob) => !files.some((f) => globToRegExp(glob).test(f)));
+
+const tracked = execFileSync('git', ['ls-files'], {
+    cwd: fileURLToPath(new URL('../..', import.meta.url)),
+    encoding: 'utf8',
+})
+    .split('\n')
+    .filter(Boolean);
+
+test('every path glob in labeler.yml matches a tracked file', () => {
+    const config = yamlCode(read('.github/labeler.yml')).filter((l) => l.trim() !== '');
+    // Guard the guard: the check below passes on an empty list too.
+    assert.ok(tracked.length > 0, 'git ls-files listed nothing');
+    assert.ok(globsOf(config).length >= 10, `only found globs ${globsOf(config)}`);
+    assert.deepEqual(deadGlobs(config, tracked), []);
+});
+
+test('a glob that matches no tracked file is reported', () => {
+    const config = [
+        "'area/dead':",
+        '  - changed-files:',
+        "      - any-glob-to-any-file: 'no/such/dir-zz/**'",
+        '      - any-glob-to-all-files:',
+        "          - 'docs/**'",
+        "          - 'no/such/file-zz.txt'",
+    ];
+    assert.deepEqual(deadGlobs(config, tracked), ['no/such/dir-zz/**', 'no/such/file-zz.txt']);
+});
+
+test('glob translation follows minimatch for the constructs labeler.yml uses', () => {
+    assert.ok(globToRegExp('*.md').test('README.md'));
+    assert.ok(!globToRegExp('*.md').test('docs/README.md'));
+    assert.ok(globToRegExp('scripts/*.mjs').test('scripts/check-policies.mjs'));
+    assert.ok(!globToRegExp('scripts/*.mjs').test('scripts/tests/a.mjs'));
+    assert.ok(globToRegExp('**/*.md').test('README.md'));
+    assert.ok(globToRegExp('**/*.md').test('docs/a/b.md'));
+    assert.ok(globToRegExp('.github/workflows/**').test('.github/workflows/.hidden.yml'));
+    assert.ok(!globToRegExp('.github/labeler.yml').test('xgithub/labeler.yml'));
+    assert.ok(globToRegExp('a?c').test('abc'));
+    assert.ok(!globToRegExp('a?c').test('a/c'));
 });
