@@ -122,7 +122,7 @@ function globToRegExp(glob) {
 function globsOf(configLines) {
     const globs = [];
     for (const l of configLines) {
-        const inline = l.match(/^\s+any-glob-to-(?:any|all)-files?\s*:\s+(\S.*)$/);
+        const inline = l.match(/^\s+(?:-\s+)?any-glob-to-(?:any|all)-files?\s*:\s+(\S.*)$/);
         const item = l.match(/^\s+-\s+(\S.*)$/);
         const raw = inline ? inline[1] : item && !item[1].trimEnd().endsWith(':') ? item[1] : null;
         if (raw !== null) globs.push(raw.trim().replace(/^(['"])(.*)\1$/, '$2'));
