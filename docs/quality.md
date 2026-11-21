@@ -80,8 +80,9 @@ request (#117, #154). `scripts/mutation-check.mjs` does that audit for the chang
 (#154).
 
 - **State:** the script, its tests, `stryker.config.mjs` and `.mutation-survivors.json` are in the tree and
-  can be run by hand. The advisory CI job that runs it on each pull request is tracked in #154 and is not on
-  `main` yet.
+  can be run by hand. `.github/workflows/mutation-check.yml` runs it on each pull request as an advisory job
+  (`continue-on-error`, 45 minute timeout, 35 minute budget). It is its own workflow, never in `ci.yml`'s
+  `test` needs and never a required check.
 - **What it mutates:** only the added and changed lines (`git diff -U0 <base>...HEAD`) of
   `.claude/hooks/*.mjs` and `scripts/*.mjs`. Tests are never mutated.
 - **Which tests it runs:** [StrykerJS](https://stryker-mutator.io/) `@stryker-mutator/core` 10.0.0 with its
