@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    LEGACY_SIGNATURE_PREFIX,
     SIGNATURE_PREFIX,
     auditPr,
     buildReport,
@@ -77,6 +78,33 @@ test('a signature inside a code fence or without agent= is not a signature', () 
     assert.equal(findSignature('```\n' + SIG + '\n```'), null);
     assert.equal(findSignature(`${SIGNATURE_PREFIX} nothing here`), null);
     assert.equal(findSignature(`text\n  ${SIG}  \n`), SIG);
+});
+
+test('the current -- hive: spelling and the older em dash spelling both count; near misses do not', () => {
+    assert.equal(SIGNATURE_PREFIX, '-- hive:');
+    assert.equal(LEGACY_SIGNATURE_PREFIX, '\u2014 hive:');
+    const current = '-- hive: agent=scanner backend=claude model=claude-sonnet-5-5 effort=high claude=2.1.327';
+    const legacy = `${LEGACY_SIGNATURE_PREFIX} agent=scanner backend=claude model=opus`;
+    assert.equal(findSignature(`Summary\n\n${current}\n`), current);
+    assert.equal(findSignature(`Summary\r\n\r\n${legacy}\r\n`), legacy);
+    for (const body of [
+        '-- hive:',
+        '-- hive: backend=claude model=x',
+        `Quoted: ${current}`,
+        '```\n' + current + '\n```',
+        '--- hive: agent=scanner',
+        '- hive: agent=scanner',
+        '--hive: agent=scanner',
+        '\u2013 hive: agent=scanner',
+        `Quoted: ${legacy}`,
+    ]) {
+        assert.equal(findSignature(body), null, JSON.stringify(body));
+    }
+    assert.deepEqual(auditPr(pr({ body: `Fixes #3\n\n${current}` }), details(), REQUIRED), []);
+    assert.deepEqual(auditPr(pr({ body: `Fixes #3\n\n${legacy}` }), details(), REQUIRED), []);
+    assert.equal(classify(pr({ author: { login: 'Danathar' }, body: legacy })), 'hive-signature');
+    const f = auditPr(pr({ body: `Fixes #3\n\nQuoted: ${current}` }), details(), REQUIRED);
+    assert.deepEqual(f.map((x) => x.rule), ['signature']);
 });
 
 test('a Hive App pull request without the signature line is a finding; a Claude Code one is not', () => {

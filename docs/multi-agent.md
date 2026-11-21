@@ -29,14 +29,14 @@ in the [runbook](ai-ops-runbook.md#workflows).
 
 ## Who works here
 
-| Who                  | How to recognise it                                                                                              | What it does                                                    |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| The owner (Danathar) | commits and pull requests under that login                                                                       | sets direction, holds or pauses, rotates keys, enrolls machines |
-| Hive agents          | the GitHub App `danathar-atomic-hive` (`app/danathar-atomic-hive` in `gh`); bodies end with `hive: agent=<name>` | file issues, claim them, open pull requests, review, merge      |
-| Codex connector      | review comments from `chatgpt-codex-connector[bot]` with `P0`-`P3` badges                                        | reviews pull requests; advisory, and may not post at all        |
-| Workflow agents      | `ai-fix.yml` and `claude.yml` runs                                                                               | act on a request on one issue or pull request                   |
-| Local agents         | Claude Code sessions on the owner's machines, committing as the owner                                            | work one issue on one branch, as the owner directs              |
-| Renovate             | pull requests from Renovate                                                                                      | dependency updates, including action SHAs in workflows          |
+| Who                  | How to recognise it                                                                                                                                | What it does                                                    |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| The owner (Danathar) | commits and pull requests under that login                                                                                                         | sets direction, holds or pauses, rotates keys, enrolls machines |
+| Hive agents          | the GitHub App `danathar-atomic-hive` (`app/danathar-atomic-hive` in `gh`); bodies end with `-- hive: agent=<name>` (an em dash before 2026-11-18) | file issues, claim them, open pull requests, review, merge      |
+| Codex connector      | review comments from `chatgpt-codex-connector[bot]` with `P0`-`P3` badges                                                                          | reviews pull requests; advisory, and may not post at all        |
+| Workflow agents      | `ai-fix.yml` and `claude.yml` runs                                                                                                                 | act on a request on one issue or pull request                   |
+| Local agents         | Claude Code sessions on the owner's machines, committing as the owner                                                                              | work one issue on one branch, as the owner directs              |
+| Renovate             | pull requests from Renovate                                                                                                                        | dependency updates, including action SHAs in workflows          |
 
 Match the hive login exactly, not "any bot": `github-actions[bot]` also acts
 here.

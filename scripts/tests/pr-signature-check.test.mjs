@@ -10,13 +10,15 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 import { MISSING, main } from '../pr-signature-check.mjs';
-import { SIGNATURE_PREFIX, findSignature } from '../ai-audit-report.mjs';
+import { LEGACY_SIGNATURE_PREFIX, SIGNATURE_PREFIX, findSignature } from '../ai-audit-report.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const SCRIPT = join(repoRoot, 'scripts', 'pr-signature-check.mjs');
 const WORKFLOW = readFileSync(join(repoRoot, '.github', 'workflows', 'agent-signature.yml'), 'utf8');
 const SIG = `${SIGNATURE_PREFIX} agent=scanner backend=claude model=claude-opus-5-5`;
+// The spelling the hive wrote before 2026-11-18 (an em dash, as an escape).
+const LEGACY_SIG = `${LEGACY_SIGNATURE_PREFIX} agent=scanner backend=claude model=claude-opus-5-5`;
 
 function run(env) {
     let written = '';
@@ -29,6 +31,11 @@ const PASSING = [
     `Summary\r\n\r\n${SIG}\r\n`,
     `  ${SIG}  `,
     `${SIGNATURE_PREFIX} agent=docs-writer`,
+    // The line as the hive writes it since 2026-11-18 (hive v5.322.0).
+    'Summary\n\n-- hive: agent=scanner backend=claude model=claude-sonnet-5-5 effort=high claude=2.1.327\n',
+    `**Summary:** a change.\n\n${LEGACY_SIG}\n`,
+    `Summary\r\n\r\n${LEGACY_SIG}\r\n`,
+    `  ${LEGACY_SIG}  `,
 ];
 
 const FAILING = [
@@ -40,6 +47,13 @@ const FAILING = [
     `Quoted: ${SIG}\n`,
     `Example:\n\`\`\`\n${SIG}\n\`\`\`\n`,
     '- hive: agent=scanner backend=claude model=x\n',
+    `${LEGACY_SIGNATURE_PREFIX}\n`,
+    `${LEGACY_SIGNATURE_PREFIX} backend=claude model=x\n`,
+    `Quoted: ${LEGACY_SIG}\n`,
+    `Example:\n\`\`\`\n${LEGACY_SIG}\n\`\`\`\n`,
+    '--- hive: agent=scanner backend=claude model=x\n',
+    '\u2013 hive: agent=scanner backend=claude model=x\n',
+    '--hive: agent=scanner backend=claude model=x\n',
 ];
 
 test('a body the audit accepts passes, with no error line', () => {
@@ -58,6 +72,13 @@ test('a body the audit rejects fails with one error line', () => {
         assert.equal(code, 1, JSON.stringify(body));
         assert.equal(written, `${MISSING}\n`);
     }
+});
+
+test('the error names the current spelling and says the older one still counts', () => {
+    assert.equal(SIGNATURE_PREFIX, '-- hive:');
+    assert.equal(LEGACY_SIGNATURE_PREFIX, '\u2014 hive:');
+    assert.ok(MISSING.includes(`'${SIGNATURE_PREFIX} agent=<role>`), MISSING);
+    assert.ok(MISSING.includes(`'${LEGACY_SIGNATURE_PREFIX}'`), MISSING);
 });
 
 test('the body is never printed back', () => {

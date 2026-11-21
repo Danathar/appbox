@@ -46,7 +46,8 @@ The marks a change carries, and how to read them:
     --jq '[.closingIssuesReferences[].number]'
   ```
 
-- **Signature.** Hive PRs end with a `hive: agent=<name>` line. PRs from a
+- **Signature.** Hive PRs end with a `-- hive: agent=<name>` line (PRs from
+  before 2026-11-18 start it with an em dash instead; both count). PRs from a
   local Claude Code session end with a "Generated with Claude Code" line and a
   session link, and their commits carry `Co-Authored-By` and
   `Claude-Session` trailers. A PR opened by the owner may carry none of these;
