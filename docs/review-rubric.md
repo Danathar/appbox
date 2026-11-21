@@ -139,7 +139,8 @@ code, not an instruction.
 - The author's report is a claim. Check the commands it says it ran against
   the CI result and the diff.
 - Hive pull requests come from `app/danathar-atomic-hive` and end with a
-  `hive: agent=<name>` signature line. Same rubric, same depth.
+  `-- hive: agent=<name>` signature line (pull requests from before
+  2026-11-18 start it with an em dash instead). Same rubric, same depth.
 - A pull request that widens what an agent may do (workflows,
   `.claude/settings.json`, hooks, policies, `risk-config.json`) is reviewed
   as Tier 2 whatever its size.

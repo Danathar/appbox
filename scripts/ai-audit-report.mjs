@@ -12,8 +12,8 @@
  * An agent pull request is one that
  *   - was opened by the Hive GitHub App (`app/danathar-atomic-hive` in `gh`
  *     output, `danathar-atomic-hive[bot]` in REST output), or
- *   - carries a hive signature line (SIGNATURE_PREFIX followed by agent=...),
- *     or
+ *   - carries a hive signature line (SIGNATURE_PREFIX, or the older
+ *     LEGACY_SIGNATURE_PREFIX, followed by agent=...), or
  *   - says it was generated with Claude Code (the line Claude Code adds to
  *     pull request bodies, or a claude.ai/code session link).
  * Everything else (Renovate, a person) is counted but not audited.
@@ -61,9 +61,15 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 export const HIVE_APP_LOGINS = ['app/danathar-atomic-hive', 'danathar-atomic-hive[bot]'];
-// The hive signature line starts with an em dash. Written as an escape so the
-// character itself appears nowhere in this repository's files.
-export const SIGNATURE_PREFIX = '\u2014 hive:';
+// The hive signature line starts with two ASCII hyphens, then ` hive:`. The
+// hive wrote an em dash instead until 2026-11-18 (hive v5.322.0), so older
+// pull requests carry that spelling and it still counts. The em dash is
+// written as an escape so the character itself appears nowhere in this
+// repository's files. No other spelling (one hyphen, three, an en dash)
+// counts.
+export const SIGNATURE_PREFIX = '-- hive:';
+export const LEGACY_SIGNATURE_PREFIX = '\u2014 hive:';
+export const SIGNATURE_PREFIXES = [SIGNATURE_PREFIX, LEGACY_SIGNATURE_PREFIX];
 export const HOLD_LABEL = 'hold';
 export const PR_LIST_LIMIT = 500;
 // GET /pulls/{n}/commits returns at most 250 commits.
@@ -93,7 +99,8 @@ export function unfencedLines(body) {
 export function findSignature(body) {
     return (
         unfencedLines(body).find(
-            (line) => line.startsWith(SIGNATURE_PREFIX) && /(^|\s)agent=\S+/.test(line)
+            (line) =>
+                SIGNATURE_PREFIXES.some((prefix) => line.startsWith(prefix)) && /(^|\s)agent=\S+/.test(line)
         ) ?? null
     );
 }
@@ -174,7 +181,7 @@ export function auditPr(pr, details, required) {
         findings.push({ rule: 'dco', detail: `commit(s) without Signed-off-by: ${unsigned.join(', ')}` });
     }
     if (isHiveApp(pr.author) && !findSignature(pr.body)) {
-        findings.push({ rule: 'signature', detail: `opened by the Hive App without a "${SIGNATURE_PREFIX} agent=..." line` });
+        findings.push({ rule: 'signature', detail: `opened by the Hive App without a "${SIGNATURE_PREFIX} agent=..." line (the older "${LEGACY_SIGNATURE_PREFIX}" spelling also counts)` });
     }
     for (const gap of requiredCheckGaps(required, pr.mergedAt, details.checkRuns, details.statuses)) {
         findings.push({ rule: 'required-check', detail: `required check \`${gap.context}\` was ${gap.state} on the head commit` });

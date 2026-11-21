@@ -1,7 +1,8 @@
 name: Agent PR signature
 
 # Checks, while an agent pull request is still open, that its body has the
-# hive signature line (an em dash, then `hive: agent=<name> ...`) the monthly
+# hive signature line (`-- hive: agent=<name> ...`; pull requests from before
+# 2026-11-18 start it with an em dash instead, which still counts) the monthly
 # agent-audit.yml run requires of Hive App pull requests. The audit sees a
 # missing line only after the merge, when the body can no longer be fixed.
 # Here it can still be added before the merge.

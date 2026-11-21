@@ -16,11 +16,12 @@
 
 import { fileURLToPath } from 'node:url';
 
-import { SIGNATURE_PREFIX, findSignature } from './ai-audit-report.mjs';
+import { LEGACY_SIGNATURE_PREFIX, SIGNATURE_PREFIX, findSignature } from './ai-audit-report.mjs';
 
 export const MISSING =
     `::error::The pull request body has no hive signature line. Add a line of its own, outside any code block, ` +
     `that starts with '${SIGNATURE_PREFIX}' and names agent=, e.g. '${SIGNATURE_PREFIX} agent=<role> backend=<backend> model=<model>'. ` +
+    `The older '${LEGACY_SIGNATURE_PREFIX}' spelling (an em dash) is still accepted. ` +
     `The monthly agent audit (agent-audit.yml) reads it.`;
 
 /** Runs the check; returns the exit code. */
