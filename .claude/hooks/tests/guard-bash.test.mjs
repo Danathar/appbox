@@ -99,6 +99,8 @@ const allowed = [
     'env --unset=FOO git log -1',
     'export -n FOO',
     'declare +x FOO',
+    // the value after `=` is not a name: un-exporting FOO=1 still leaves the settings env alone
+    'export -n FOO=1',
     'env -i ls',
     'exec -a name ls',
     'exec -a name git log -1',
@@ -463,6 +465,10 @@ const blocked = [
     ['export -n GIT_CONFIG_COUNT; git log -p', /export -n/],
     ['declare +x GIT_CONFIG_COUNT; git log -p', /remove the GIT_CONFIG_\* settings env/],
     ['typeset +x GIT_CONFIG_VALUE_0', /remove the GIT_CONFIG_\* settings env/],
+    // -n combined with another export flag still un-exports
+    ['export -pn GIT_CONFIG_COUNT', /remove the GIT_CONFIG_\* settings env/],
+    // a function's `local` overwrites the exported value for the git it runs
+    ['f() { local GIT_CONFIG_COUNT=0; git log -p; }; f', /overwrites the GIT_CONFIG_\* settings env/],
     ['env -u GIT_CONFIG_COUNT git log -p', /env -u GIT_CONFIG_COUNT/],
     ['env -uGIT_CONFIG_COUNT git log -p', /env -u GIT_CONFIG_COUNT/],
     ['env --unset=GIT_CONFIG_COUNT git log -p', /env -u GIT_CONFIG_COUNT/],
