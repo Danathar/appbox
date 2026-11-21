@@ -72,6 +72,44 @@ gh run view <run-id> -R Danathar/appbox --log-failed
 gh pr checks <N> -R Danathar/appbox
 ```
 
+## Mutation check on changed lines
+
+A guard-hook fix can merge with every test green and still have changed lines the tests do not notice when
+they are broken. Until now a later hand mutation audit found those, and each needed a separate test-only pull
+request (#117, #154). `scripts/mutation-check.mjs` does that audit for the changed lines of a pull request
+(#154).
+
+- **State:** the script, its tests, `stryker.config.mjs` and `.mutation-survivors.json` are in the tree and
+  can be run by hand. The advisory CI job that runs it on each pull request is tracked in #154 and is not on
+  `main` yet.
+- **What it mutates:** only the added and changed lines (`git diff -U0 <base>...HEAD`) of
+  `.claude/hooks/*.mjs` and `scripts/*.mjs`. Tests are never mutated.
+- **Which tests it runs:** [StrykerJS](https://stryker-mutator.io/) `@stryker-mutator/core` 10.0.0 with its
+  built-in `command` test runner, so the tests stay plain `node --test` files. Hook files run against
+  `node --test .claude/hooks/tests/guard-bash.test.mjs .claude/hooks/tests/gate-refusal-corpus.test.mjs`; a
+  script `scripts/<name>.mjs` runs against `scripts/tests/<name>.test.mjs`, and a changed script without one
+  is reported. `.claude/hooks/tests/shell-reader.test.mjs` is never in a command: it pins the reader's sha256,
+  so it fails for every mutant and would count each one as killed.
+- **No dependency:** install the pinned Stryker with `npm install --prefix <dir> --no-save --ignore-scripts
+  --no-audit --no-fund @stryker-mutator/core@10.0.0`, outside the checkout; the repository has no
+  `package.json`. `scripts/mutation-check.mjs` is dependency-free and `stryker.config.mjs` holds the Stryker
+  settings.
+- **Result:** exit 0 means no new survivor, 1 a new survivor (each listed, and in the step summary when
+  `GITHUB_STEP_SUMMARY` is set, with a ready-to-fill ledger entry), 2 the check could not run.
+- **Time budget:** `--budget-minutes <n>` ends the whole run after n minutes, so a large change cannot run
+  into a CI job timeout, which would end the job as `cancelled` and block the merge even for an advisory job.
+  At the budget the Stryker run in progress is killed with its test processes, the remaining groups are
+  skipped, and the output says the results are incomplete; survivors found in the groups that finished are
+  still reported. Without the option there is no limit.
+- **What to do with a survivor:** add a test that fails on it. If it is equivalent (behaves the same) or
+  harmless over-refusal (the guard refuses more, never less), add the printed entry to
+  `.mutation-survivors.json` with a real reason. Entries match on file, mutator, original and replacement
+  text, not on line numbers, so they survive edits elsewhere in the file. A survivor that lets the guard
+  allow a command it should refuse is never accepted.
+- **By hand:** `node scripts/mutation-check.mjs --base origin/main --stryker <dir>/node_modules/.bin/stryker`.
+  `--dry-run` prints the Stryker runs without starting them; `--report <file>` checks existing Stryker JSON
+  reports against the ledger.
+
 ## Known weak spots
 
 - **Machines are not observed.** Nothing reports a failed update on a
