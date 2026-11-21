@@ -1,0 +1,48 @@
+name: Mutation check
+
+# Advisory, never a required check (#154): on a pull request it mutates the
+# changed lines of .claude/hooks/*.mjs and scripts/*.mjs with a pinned
+# StrykerJS installed outside the checkout (the repository keeps no
+# package.json) and lists every mutant no test notices. It is a separate
+# workflow so it is never in ci.yml's `test` needs. See docs/quality.md.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: mutation-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  mutation:
+    name: Mutation check on changed lines (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+
+      - name: Install Stryker (pinned, not saved)
+        run: npm install --prefix "$RUNNER_TEMP/stryker" --no-save --ignore-scripts --no-audit --no-fund @stryker-mutator/core@10.0.0
+
+      - name: Mutate changed lines
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        # The budget ends the run on its own well before timeout-minutes, which
+        # stays as a backstop: a job cut off by its timeout reports `cancelled`,
+        # and that blocks the merge even with continue-on-error.
+        run: node scripts/mutation-check.mjs --base "origin/$BASE_REF" --stryker "$RUNNER_TEMP/stryker/node_modules/.bin/stryker" --budget-minutes 35
