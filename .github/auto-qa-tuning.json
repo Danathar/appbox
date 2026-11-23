@@ -8,7 +8,7 @@
             "note": "The nightly fails when ghcr.io/danathar/appbox:latest was created more than this many days ago. build-appbox runs daily, so a healthy image is less than a day old when the nightly checks it. The tuner moves it one day per week toward the observed rules.age_percentile age, rounded up to whole days, plus rules.age_slack_days."
         },
         "network_retries": {
-            "value": 2,
+            "value": 1,
             "min": 1,
             "max": 5,
             "note": "Extra attempts the nightly allows each registry operation (skopeo inspect, cosign verify, podman pull) before calling it a failure. The tuner raises it when operations keep succeeding only on their last allowed attempt, and lowers it after a long run of nights where nothing needed a retry."
