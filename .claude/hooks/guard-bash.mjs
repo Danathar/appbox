@@ -116,6 +116,16 @@
 //     typeset/local/readonly; and git run behind `env -i`,
 //     `--ignore-environment`, a lone `-`, or `exec -c`, which empty its
 //     environment.
+//   - Assigning HOME, XDG_CONFIG_HOME or PATH, in any spelling: before a
+//     command, as a statement of its own, through export/declare/typeset/
+//     local/readonly or env. HOME and XDG_CONFIG_HOME pick the folder git reads
+//     its global config from and PATH picks the git that runs, so a branch that
+//     commits a folder holding a .gitconfig or a program named git could
+//     otherwise make a pre-approved git diff/log run a program.
+//   - The builtins that assign a variable named as an operand, when the name
+//     is one of those or a GIT_CONFIG_* name (or a word the shell rewrites):
+//     read, mapfile/readarray, `printf -v`, the variable of a for/select
+//     loop, getopts, and let.
 //   node
 //   - `node --test` with options outside the test-runner allowlist, and node
 //     with NODE_OPTIONS or another NODE_* variable set.
@@ -403,6 +413,36 @@ function blockSettingsEnvOverwrite(what) {
             'committed repository folder from running a program; the variable stays exported, so git reads the ' +
             'new value. Leave it set.'
     );
+}
+
+// HOME and XDG_CONFIG_HOME pick the folder git reads its global config from
+// (`$HOME/.gitconfig`, `$XDG_CONFIG_HOME/git/config`) and PATH picks the
+// program `git` names. All three are already exported, so `HOME=dir; git diff`
+// reaches git as surely as `HOME=dir git diff`: a branch that commits dir/
+// with a .gitconfig setting diff.external, or a program named git, gets it
+// run by a pre-approved git diff/log. `NAME+=` appends and counts the same.
+const CONFIG_REACH_ENV = new Set(['HOME', 'XDG_CONFIG_HOME', 'PATH']);
+
+function reachesConfig(name) {
+    return CONFIG_REACH_ENV.has(name.endsWith('+') ? name.slice(0, -1) : name);
+}
+
+function blockConfigReach(what) {
+    return block(
+        `Blocked: \`${what}\` changes HOME, XDG_CONFIG_HOME or PATH, which pick the git config file and the git ` +
+            'program every later git command uses; a folder committed on a branch could then make git run a program. ' +
+            'Leave them as they are, and name a program by its full path instead of changing PATH.'
+    );
+}
+
+// A name assigned by a builtin operand (`read NAME`, `printf -v NAME`,
+// `for NAME in`): one of the names above, a GIT_CONFIG_* name, or a word the
+// shell rewrites into a name this hook cannot see (`$v`, a glob, braces).
+function assignedNameRefusal(cmd, name) {
+    if (name === undefined) return blockSettingsEnvOverwrite(`${cmd}`);
+    if (reachesConfig(name)) return blockConfigReach(`${cmd} ${name}`);
+    if (name.includes('GIT_CONFIG') || /[$`*?[{]/.test(name)) return blockSettingsEnvOverwrite(`${cmd} ${name}`);
+    return null;
 }
 
 function checkGit(args, inlineEnv = {}, exported = {}) {
@@ -1143,6 +1183,8 @@ function checkSegment(words, state) {
             // Only assignments: they set shell variables, and an exported one keeps its export.
             const name = Object.keys(inlineEnv).find((k) => k.includes('GIT_CONFIG'));
             if (name !== undefined) return blockSettingsEnvOverwrite(`${name}=${inlineEnv[name]}`);
+            const reach = Object.keys(inlineEnv).find(reachesConfig);
+            if (reach !== undefined) return blockConfigReach(`${reach}=${inlineEnv[reach]}`);
             return null;
         }
         // A command name the shell builds with braces or wildcards: brace groups
@@ -1234,6 +1276,8 @@ function checkSegment(words, state) {
         w = w.slice(idx);
     }
 
+    const reach = Object.keys(inlineEnv).find(reachesConfig);
+    if (reach !== undefined) return blockConfigReach(`${reach}=${inlineEnv[reach]} ${w[0]}`);
     const cmd = basename(w[0]);
     const args = w.slice(1);
     if (xargsFed && (cmd === 'git' || cmd === 'node' || cmd === 'nodejs' || SHELLS.has(cmd))) {
@@ -1253,6 +1297,7 @@ function checkSegment(words, state) {
         for (const a of args) {
             if (a.startsWith('-') || a.startsWith('+')) continue;
             const eq = a.indexOf('=');
+            if (eq !== -1 && reachesConfig(a.slice(0, eq))) return blockConfigReach(`${cmd} ${a}`);
             if (!exports && eq !== -1 && a.slice(0, eq).includes('GIT_CONFIG')) return blockSettingsEnvOverwrite(`${cmd} ${a}`);
             if (unexports && removesSettingsEnv(eq === -1 ? a : a.slice(0, eq))) {
                 const flags = args.filter((o) => o.startsWith('-') || o.startsWith('+'));
@@ -1265,6 +1310,34 @@ function checkSegment(words, state) {
     if (cmd === 'unset') {
         const name = args.find(removesSettingsEnv);
         if (name !== undefined) return blockSettingsEnvRemoval(`unset ${name}`);
+    }
+    // Builtins that assign the variable an operand names keep its export, as a
+    // `NAME=value` statement does: `read NAME`, `mapfile NAME` / `readarray
+    // NAME`, `printf -v NAME`, the variable of `for NAME in` / `select NAME
+    // in`, getopts's second operand, and `let NAME=...`. Every word of read and
+    // mapfile is read as a possible name.
+    if (cmd === 'read' || cmd === 'mapfile' || cmd === 'readarray') {
+        for (const a of args) {
+            const r = assignedNameRefusal(cmd, a);
+            if (r) return r;
+        }
+    }
+    if (cmd === 'printf' && args.length && args[0].startsWith('-v')) {
+        const r = assignedNameRefusal('printf -v', args[0] === '-v' ? args[1] : args[0].slice(2));
+        if (r) return r;
+    }
+    // `for ((i = 0; ...))` names no variable here: the reader splits the
+    // arithmetic off, so a loop with no word after it is left alone.
+    if (cmd === 'for' || cmd === 'select' || cmd === 'getopts') {
+        const name = cmd === 'getopts' ? args[1] : args[0];
+        const r = name === undefined ? null : assignedNameRefusal(cmd, name);
+        if (r) return r;
+    }
+    if (cmd === 'let') {
+        const reachExpr = args.find((a) => /(?:^|[^\w])(?:HOME|XDG_CONFIG_HOME|PATH)\b/.test(a));
+        if (reachExpr !== undefined) return blockConfigReach(`let ${reachExpr}`);
+        const expr = args.find((a) => a.includes('GIT_CONFIG') || a.includes('$'));
+        if (expr !== undefined) return blockSettingsEnvOverwrite(`let ${expr}`);
     }
     if (cmd === 'export' || ((cmd === 'declare' || cmd === 'typeset') && args.some((a) => /^-[a-zA-Z]*x/.test(a)))) {
         for (const a of args) {
