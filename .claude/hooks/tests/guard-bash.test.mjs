@@ -69,6 +69,11 @@ const allowed = [
     'for f in a b; do echo "$f"; done',
     'for ((i = 0; i < 3; i++)); do echo $i; done',
     'let i=i+1',
+    'let MY_HOME=1',
+    'export PATHS',
+    // only the printf builtin's -v names a variable: grep's is a flag, and a format is text
+    'grep -v PATH README.md',
+    "printf '%s [ok]\\n' a",
     // env's own options, with the wrapped command left alone
     'env -u APPBOX_X ls docs',
     "env -S 'ls docs'",
@@ -530,6 +535,10 @@ const blocked = [
     ['select PATH in planted; do git log -1; done', /HOME, XDG_CONFIG_HOME or PATH/],
     ['getopts x HOME; git log -p', /HOME, XDG_CONFIG_HOME or PATH/],
     ['let HOME=1; git log -p', /HOME, XDG_CONFIG_HOME or PATH/],
+    ['let i=1,HOME=2; git log -p', /HOME, XDG_CONFIG_HOME or PATH/],
+    // a builtin that assigns another name still has its other words read
+    ["for f in 'distrobox rm apps'; do echo x; done", /distrobox rm/],
+    ["/usr/bin/printf -v out 'distrobox rm apps'", /distrobox rm/],
     // env reads its split string as its own arguments, options included, in
     // every spelling of -S: the reader keeps the string as one value
     ["env -S '-i git log -p'", /without the GIT_CONFIG_\* settings env/],
@@ -583,6 +592,28 @@ for (const [command, why] of blocked) {
         assert.match(r.reason, why);
     });
 }
+
+test('a refused environment assignment is named in the reason, with what to do instead', () => {
+    for (const [command, what] of [
+        ['HOME=planted', 'HOME=planted'],
+        ['PATH=planted git log -1', 'PATH=planted git'],
+        ['export HOME=planted', 'export HOME=planted'],
+        ['read -r HOME', 'read HOME'],
+        ['let PATH=1', 'let PATH=1'],
+    ]) {
+        const { reason } = checkCommand(command);
+        assert.ok(reason.startsWith(`Blocked: \`${what}\` changes HOME, XDG_CONFIG_HOME or PATH`), reason);
+        assert.match(reason, /a folder committed on a branch could then make git run a program\. Leave them as they are, and name a program by its full path instead of changing PATH\./);
+    }
+    for (const [command, what] of [
+        ['printf -v', 'printf -v'],
+        ['printf -v GIT_CONFIG_COUNT %s 0', 'printf -v GIT_CONFIG_COUNT'],
+        ['let GIT_CONFIG_COUNT=0', 'let GIT_CONFIG_COUNT=0'],
+    ]) {
+        const { reason } = checkCommand(command);
+        assert.ok(reason.startsWith(`Blocked: \`${what}\` overwrites the GIT_CONFIG_* settings env`), reason);
+    }
+});
 
 test('machineScript tells host/install from coreutils install', () => {
     assert.equal(machineScript('host/install'), 'installer');
