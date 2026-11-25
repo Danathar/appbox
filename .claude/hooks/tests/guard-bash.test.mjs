@@ -574,7 +574,8 @@ const blocked = [
     ["bash -c 'cd /tmp && git diff -- x .env'", /directory change/],
     ['CDPATH=/tmp; cd tests && git log -1', /directory change/],
     ['cd /nosuchdir-appbox && git log -1', /directory change/],
-    ['$X tests && git log -1', /directory change/],
+    // a name the reader cannot spell is refused as that, before git is reached
+    ['$X tests && git log -1', /running \$X/],
     ['cd tests extra && git log -1', /directory change/],
     ['echo "$(( PATH = 1 ))"; git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
     // a builtin that assigns another name still has its other words read
