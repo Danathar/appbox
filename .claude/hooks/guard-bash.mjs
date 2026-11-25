@@ -126,6 +126,13 @@
 //     is one of those or a GIT_CONFIG_* name (or a word the shell rewrites):
 //     read, mapfile/readarray, `printf -v`, the variable of a for/select
 //     loop, getopts, and let.
+//   - The same names named in an arithmetic command or expansion
+//     (`(( PATH = 1 ))`, `: $(( HOME = 1 ))`), which assign with no NAME=value.
+//   - git, node, bats or actionlint after a `cd`, `pushd` or `popd` anywhere in
+//     the command line that may leave the checkout: the operand checks resolve
+//     paths against the checkout, and `cd /tmp && git diff -- x .env` ran git
+//     outside any repository. `cd tests` and `cd "$CLAUDE_PROJECT_DIR"` stay
+//     allowed.
 //   node
 //   - `node --test` with options outside the test-runner allowlist, and node
 //     with NODE_OPTIONS or another NODE_* variable set.
@@ -150,11 +157,12 @@ import { fileURLToPath } from 'node:url';
 // Reading the command line as the shell would is shared with the other
 // repositories that carry this guard; see shell-reader.mjs.
 import {
-    ARGUMENT_ONLY_PROGRAMS, BUDGET_MS, COMMAND_STRING_SEPARATORS, commandNameReader, commandStrings, EXEC_GIT_CONFIG,
+    ARGUMENT_ONLY_PROGRAMS, BUDGET_MS, changesDirectory, CHDIR, closeParen, COMMAND_STRING_SEPARATORS, commandNameReader,
+    commandStrings, EXEC_GIT_CONFIG,
     expandWrapperOptions, extractSubstitutions, FIND_EXEC, fishScripts, firstWord, GIT_EXEC_OPTION, GIT_SHORT_UPLOAD_PACK,
     GIT_UPLOAD_PACK_OPTION, GIT_UPLOAD_PACK_SUBCOMMANDS, globMatches, isAssignment, KEYWORDS, MAX_UNLISTED_INNER,
-    OverBudget, REFUSED_GIT_OPTION, RISKY_GIT_CONFIG, riskyEnv, SAFE_ENV, SHELLS, spend, startBudget, tokenize, unquoted,
-    WRAPPERS, wrapperTarget,
+    OverBudget, readAnsiC, readHeredocStart, REFUSED_GIT_OPTION, RISKY_GIT_CONFIG, riskyEnv, SAFE_ENV, SHELLS, skipHeredocBody,
+    spend, startBudget, tokenize, unquoted, WRAPPERS, wrapperTarget,
 } from './shell-reader.mjs';
 
 export { BUDGET_MS, tokenize } from './shell-reader.mjs';
@@ -443,6 +451,108 @@ function assignedNameRefusal(cmd, name) {
     if (reachesConfig(name)) return blockConfigReach(`${cmd} ${name}`);
     if (name.includes('GIT_CONFIG') || /[$`*?[{]/.test(name)) return blockSettingsEnvOverwrite(`${cmd} ${name}`);
     return null;
+}
+
+// `(( PATH = 1 ))` and `: $(( HOME = 1 ))` assign as `let PATH=1` does, with no
+// NAME=value word for the checks above to see. The reader splits the parens
+// off and leaves the plain words `PATH = 1`, so the expression is read here
+// from the command line: every whole name between `((` and the paren that
+// closes them counts as assigned. A name that is only read counts too, which
+// only refuses more. Single-quoted text and quoted here-document bodies are
+// data, and inside double quotes only `$((` is arithmetic. A single `(` opens
+// a subshell, so `( echo PATH )` names nothing.
+const ARITHMETIC_NAME = /(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*/g;
+
+export function arithmeticNames(input) {
+    const names = [];
+    let inSingle = false;
+    let inDouble = false;
+    const pending = []; // here-documents started on the current line
+    for (let i = 0; i < input.length; i++) {
+        const c = input[i];
+        if (c === '\\' && !inSingle) {
+            i++;
+        } else if (c === '$' && input[i + 1] === "'" && !inSingle && !inDouble) {
+            i = readAnsiC(input, i + 2).next - 1;
+        } else if (c === "'" && !inDouble) {
+            inSingle = !inSingle;
+        } else if (c === '"' && !inSingle) {
+            inDouble = !inDouble;
+        } else if (!inSingle && !inDouble && c === '<' && input[i + 1] === '<' && input[i + 2] !== '<') {
+            const h = readHeredocStart(input, i);
+            if (h.delim) pending.push(h);
+            i = h.next - 1;
+        } else if (!inSingle && !inDouble && c === '\n' && pending.length) {
+            while (pending.length && pending[0].quoted) i = skipHeredocBody(input, i + 1, pending.shift().delim) - 1;
+            pending.length = 0;
+        } else if (!inSingle && c === '(' && input[i + 1] === '(' && (!inDouble || input[i - 1] === '$')) {
+            const end = closeParen(input, i + 1);
+            names.push(...(input.slice(i + 2, end).match(ARITHMETIC_NAME) ?? []));
+            i = end - 1;
+        }
+    }
+    return names;
+}
+
+// A name an arithmetic command or expansion assigns: refused for the names the
+// statement `NAME=value` is refused for.
+function arithmeticRefusal(name) {
+    if (name.includes('GIT_CONFIG')) return blockSettingsEnvOverwrite(`(( ${name} ))`);
+    if (reachesConfig(name)) return blockConfigReach(`(( ${name} ))`);
+    return null;
+}
+
+// Directory changes. Every operand check here resolves a path against the
+// checkout, but a `cd` earlier in the same string moves git (and node, bats,
+// actionlint) somewhere those checks no longer hold: `cd /tmp && git diff --
+// x .env` passes as two in-tree operands, then git runs outside any
+// repository, falls back to --no-index with no flag and prints /tmp/.env. It
+// is the shell's spelling of `git -C DIR`. A change stays allowed only when it
+// targets the project root or a literal relative path, with no `..`, whose
+// real path is inside the checkout (`cd tests`). A bare `cd`, `cd -`, an
+// option, a `~`, `$`, backtick or glob target, every `popd`, and a relative
+// name while CDPATH is set or assigned in the string all count as leaving.
+const PROJECT_DIRECTORY_WORDS = new Set(['$CLAUDE_PROJECT_DIR', '${CLAUDE_PROJECT_DIR}']);
+const DIRECTORY_GATED = new Set(['git', 'node', 'nodejs', 'bats', 'actionlint']);
+
+function checkoutRoot() {
+    const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    try {
+        return realpathSync(dir);
+    } catch {
+        return resolve(dir);
+    }
+}
+
+/** True when this tokenized segment runs a cd, pushd or popd that may leave the checkout. */
+export function leavesCheckout(words, cdpath) {
+    if (!changesDirectory(words)) return false;
+    const at = words.findIndex((x) => CHDIR.has(basename(x)));
+    // Spelled in a way this cannot read (`$X sub`, `{cd,} sub`, a wildcard).
+    if (at === -1) return true;
+    const name = basename(words[at]);
+    const operands = words.slice(at + 1);
+    if (name === 'popd' || operands.length !== 1) return true;
+    const target = operands[0];
+    if (PROJECT_DIRECTORY_WORDS.has(target)) return false;
+    if (target === '' || /^[-+~]/.test(target) || /[$`*?[{]/.test(target)) return true;
+    const root = checkoutRoot();
+    if (target.startsWith('/')) {
+        try {
+            return realpathSync(target) !== root;
+        } catch {
+            return true;
+        }
+    }
+    if (target.split('/').includes('..') || (cdpath && !target.startsWith('./'))) return true;
+    const joined = resolve(root, target);
+    let real = joined;
+    try {
+        real = realpathSync(joined);
+    } catch {
+        // A directory that does not exist cannot be entered; the path is inside.
+    }
+    return !(real === root || real.startsWith(`${root}/`));
 }
 
 function checkGit(args, inlineEnv = {}, exported = {}) {
@@ -1339,6 +1449,16 @@ function checkSegment(words, state) {
         const expr = args.find((a) => a.includes('GIT_CONFIG') || a.includes('$'));
         if (expr !== undefined) return blockSettingsEnvOverwrite(`let ${expr}`);
     }
+    if (state.cwdLeft && DIRECTORY_GATED.has(cmd)) {
+        return block(
+            `Blocked: a directory change in this command line (\`${state.cwdLeft}\`) may move the shell out of this ` +
+                `checkout before \`${cmd}\` runs, and every operand check here resolves paths against the checkout: ` +
+                '`cd /some/dir && git diff -- a.env b` passes as two in-tree operands, then git runs outside any ' +
+                "repository, falls back to --no-index on its own and prints both files. It is the shell's spelling of " +
+                '`git -C DIR`. A cd to the project root (`cd "$CLAUDE_PROJECT_DIR"`) or into a literal relative path ' +
+                'inside the checkout (`cd tests`) is not refused; otherwise run the command from the checkout and name the paths.'
+        );
+    }
     if (cmd === 'export' || ((cmd === 'declare' || cmd === 'typeset') && args.some((a) => /^-[a-zA-Z]*x/.test(a)))) {
         for (const a of args) {
             const eq = a.indexOf('=');
@@ -1411,11 +1531,22 @@ export function checkCommand(command, outer = {}) {
     // Whether this command line looks up the pids of Signal or Claude in a substitution (see wordHasAppPids).
     const state = Object.create(outer);
     state.appLookup = subs.some((sub) => APP_PID_LOOKUP.test(sub));
+    // A directory change anywhere in the command line counts for all of it:
+    // substitutions are checked before the segments around them, and a
+    // `( cd DIR && ... )` subshell is not followed as a scope. Fail closed.
+    const segments = tokenize(command);
+    const cdpath = /CDPATH/.test(command) || 'CDPATH' in process.env;
+    const left = segments.find((seg) => leavesCheckout(seg, cdpath));
+    if (left !== undefined) state.cwdLeft = left.join(' ');
+    for (const name of arithmeticNames(command)) {
+        const r = arithmeticRefusal(name);
+        if (r) return r;
+    }
     for (const sub of subs) {
         const r = checkCommand(sub, state);
         if (r) return r;
     }
-    for (const words of tokenize(command)) {
+    for (const words of segments) {
         const r = checkSegment(words, state);
         if (r) return r;
     }
