@@ -59,7 +59,20 @@ const allowed = [
     'jq . .claude/settings.json',
     'actionlint',
     // reading HOME/PATH, and builtins that assign other names, stay allowed
-    'cd "$HOME" && git status',
+    'echo "$HOME" && git status',
+    // arithmetic on other names, and a subshell that only prints a name
+    '(( i = 1 )); git log -1',
+    '( echo PATH ); git log -1',
+    // a directory change that stays inside the checkout
+    'cd tests && git log -1',
+    'cd ./tests && git log -1',
+    'cd "$CLAUDE_PROJECT_DIR" && git log -1',
+    'cd nosuchdir && git log -1',
+    // arithmetic text that is data: quoted, escaped or ANSI-C quoted
+    "echo '(( PATH = 1 ))'; git log -1",
+    'echo "(( PATH = 1 ))"; git log -1',
+    "echo $'(( PATH = 1 ))'; git log -1",
+    'echo \\(\\( PATH \\)\\); git log -1',
     'echo "$PATH"',
     'TZ=UTC; git log -1',
     'export FOO=1',
@@ -536,6 +549,34 @@ const blocked = [
     ['getopts x HOME; git log -p', /HOME, XDG_CONFIG_HOME or PATH/],
     ['let HOME=1; git log -p', /HOME, XDG_CONFIG_HOME or PATH/],
     ['let i=1,HOME=2; git log -p', /HOME, XDG_CONFIG_HOME or PATH/],
+    ['(( PATH = 1 )); git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
+    ['(( HOME = 1 )); git diff HEAD~1 HEAD', /HOME, XDG_CONFIG_HOME or PATH/],
+    [': $(( XDG_CONFIG_HOME = 1 )); git log -p -1', /HOME, XDG_CONFIG_HOME or PATH/],
+    ['(( GIT_CONFIG_COUNT = 0 )); git log -p', /overwrites the GIT_CONFIG_\* settings env/],
+    ['declare PATH=planted:$PATH; git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
+    ['readonly PATH=planted:$PATH; git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
+    ['typeset -g PATH=planted:$PATH; git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
+    // a directory change that may leave the checkout, before git or another
+    // command whose operands are checked against the checkout
+    ['cd /tmp && git diff -- x .env', /directory change/],
+    ['cd /tmp; git diff -- x .env', /directory change/],
+    ['(cd /tmp && git diff -- x .env)', /directory change/],
+    ['pushd /tmp && git diff -- x .env', /directory change/],
+    ['cd && git diff -- .netrc .env', /directory change/],
+    ['cd .. && git log -1', /directory change/],
+    ['cd - && git log -1', /directory change/],
+    ['cd "$HOME" && git status', /directory change/],
+    ['cd ~ && git status', /directory change/],
+    ['builtin cd /tmp && git log -1', /directory change/],
+    ['popd && git log -1', /directory change/],
+    ['cd /tmp && bats tests/unit', /directory change/],
+    ['cd /tmp && node --test .claude/hooks/tests/', /directory change/],
+    ["bash -c 'cd /tmp && git diff -- x .env'", /directory change/],
+    ['CDPATH=/tmp; cd tests && git log -1', /directory change/],
+    ['cd /nosuchdir-appbox && git log -1', /directory change/],
+    ['$X tests && git log -1', /directory change/],
+    ['cd tests extra && git log -1', /directory change/],
+    ['echo "$(( PATH = 1 ))"; git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
     // a builtin that assigns another name still has its other words read
     ["for f in 'distrobox rm apps'; do echo x; done", /distrobox rm/],
     ["/usr/bin/printf -v out 'distrobox rm apps'", /distrobox rm/],
@@ -592,6 +633,19 @@ for (const [command, why] of blocked) {
         assert.match(r.reason, why);
     });
 }
+
+test('a cd to the project root by its absolute path stays allowed', () => {
+    const saved = process.env.CLAUDE_PROJECT_DIR;
+    process.env.CLAUDE_PROJECT_DIR = fileURLToPath(new URL('../../../', import.meta.url));
+    try {
+        const root = process.env.CLAUDE_PROJECT_DIR.replace(/\/$/, '');
+        assert.equal(checkCommand(`cd ${root} && git log -1`), null);
+        assert.ok(checkCommand(`cd ${root}/.. && git log -1`)?.blocked);
+    } finally {
+        if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+        else process.env.CLAUDE_PROJECT_DIR = saved;
+    }
+});
 
 test('a refused environment assignment is named in the reason, with what to do instead', () => {
     for (const [command, what] of [
