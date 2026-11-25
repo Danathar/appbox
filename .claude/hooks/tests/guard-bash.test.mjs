@@ -9,9 +9,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkCommand, isSecretPath, machineScript, OWNER_ENV } from '../guard-bash.mjs';
+import { arithmeticNames, checkCommand, isSecretPath, leavesCheckout, machineScript, OWNER_ENV, tokenize } from '../guard-bash.mjs';
 
 const HOOK = fileURLToPath(new URL('../guard-bash.mjs', import.meta.url));
 
@@ -642,6 +644,123 @@ test('a cd to the project root by its absolute path stays allowed', () => {
         const root = process.env.CLAUDE_PROJECT_DIR.replace(/\/$/, '');
         assert.equal(checkCommand(`cd ${root} && git log -1`), null);
         assert.ok(checkCommand(`cd ${root}/.. && git log -1`)?.blocked);
+    } finally {
+        if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+        else process.env.CLAUDE_PROJECT_DIR = saved;
+    }
+});
+
+test('arithmeticNames reads the names between (( and the paren that closes them, and only there', () => {
+    for (const [input, names] of [
+        ['(( a = 1 ))', ['a']],
+        ['(( 1 ))', []],
+        ['', []],
+        ['x (( a ))', ['a']],
+        ['(( a )) (( b ))', ['a', 'b']],
+        ['echo "$(( a ))"', ['a']],
+        ['(( a )) # x', ['a']],
+        // data: quoted, escaped, ANSI-C quoted
+        ['echo "(( a ))"', []],
+        ['\\(( a ))', []],
+        ["$'(( a ))'", []],
+        // what follows a quote that only looks like the start of data is read
+        ["'\\'; (( a ))", ['a']],
+        ["$'x'(( a ))", ['a']],
+        ["echo '$'; (( a ))", ['a']],
+        // a quote after an ordinary word is not ANSI-C quoting: the backslash does not escape inside it
+        ["echo a'\\'' (( x ))", []],
+        ["$'\\'' ; (( a ))", ['a']],
+        ["$'a\\'b'; (( a ))", ['a']],
+        ['echo "$\'"; (( a ))', ['a']],
+        // here-documents: a quoted body is data, an unquoted one is not, and a here-string has no body
+        ["cat <<'EOF'\n(( a ))\nEOF\n(( b ))", ['b']],
+        ["cat <<'EOF' ; echo\n(( a ))\nEOF\n(( b ))", ['b']],
+        ["cat <<'EOF'\n(( a ))", []],
+        ['cat <<EOF\n(( a ))\nEOF\n(( b ))', ['a', 'b']],
+        ['cat <<< x; (( a ))', ['a']],
+        // the body starts at the end of the command line, not at a newline inside quotes or at the first word after the <<
+        ["cat <<'EOF' \"x\ny\"\n(( x ))\nEOF\n(( y ))", ['y']],
+        ["cat <<'EOF' 'x\ny'\n(( x ))\nEOF\n(( y ))", ['y']],
+        ["cat <<'EOF'; (( a ))\nx\nEOF\n", ['a']],
+        // each quoted body is skipped in turn
+        ["cat <<'A' <<'B'\n(( a ))\nA\n(( b ))\nB\n(( c ))", ['c']],
+        ["cat <<'EOF'\n(( a ))\nEOF\n(( b ))\ncat <<'EOF'\n(( c ))\nEOF\n(( d ))", ['b', 'd']],
+        ["echo '<<EOF'\n(( a ))", ['a']],
+        ['echo "<<\'EOF\'"\n(( a ))\nEOF\n(( b ))', ['a', 'b']],
+    ]) {
+        assert.deepEqual(arithmeticNames(input), names, JSON.stringify(input));
+    }
+});
+
+test('a harmless arithmetic command does not end the check of the rest of the line', () => {
+    assert.match(checkCommand('(( i = 1 )); distrobox rm apps')?.reason ?? '', /distrobox rm/);
+});
+
+test('a refused arithmetic assignment names the command and the variable', () => {
+    assert.ok(checkCommand('(( PATH = 1 )); git log -1').reason.startsWith('Blocked: `(( PATH ))` changes HOME, XDG_CONFIG_HOME or PATH'));
+    assert.ok(checkCommand('(( GIT_CONFIG_COUNT = 0 )); git log -1').reason.startsWith('Blocked: `(( GIT_CONFIG_COUNT ))` '));
+});
+
+test('leavesCheckout decides each cd, pushd and popd against the real checkout', () => {
+    const saved = process.env.CLAUDE_PROJECT_DIR;
+    const base = mkdtempSync(join(tmpdir(), 'guard-cd-'));
+    try {
+        const root = join(realpathSync(base), 'project');
+        mkdirSync(join(root, 'tests'), { recursive: true });
+        symlinkSync(tmpdir(), join(root, 'link'));
+        process.env.CLAUDE_PROJECT_DIR = root;
+        const leaves = (line, cdpath = false) => leavesCheckout(tokenize(line)[0], cdpath);
+        for (const line of ['git log -1', 'cd tests', 'cd ./tests', 'cd .', 'cd nosuchdir', 'cd "$CLAUDE_PROJECT_DIR"', 'cd "${CLAUDE_PROJECT_DIR}"', `cd ${root}`, 'pushd tests']) {
+            assert.equal(leaves(line), false, line);
+        }
+        for (const line of [
+            'cd', 'cd -', 'cd ~', 'cd /tmp', 'cd ..', 'cd ../project', 'cd tests/../tests', 'cd tests extra', 'cd "$HOME"', 'cd t*', 'cd link',
+            `cd ${root}/tests`, `cd ${root}/nosuchdir`, `cd ${root}/..`, 'cd ""', 'popd', 'popd tests', 'pushd /tmp', '$X tests',
+        ]) {
+            assert.equal(leaves(line), true, line);
+        }
+        // CDPATH can make a relative name mean another directory; ./ cannot
+        assert.equal(leaves('cd tests', true), true);
+        assert.equal(leaves('cd ./tests', true), false);
+    } finally {
+        rmSync(base, { recursive: true, force: true });
+        if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+        else process.env.CLAUDE_PROJECT_DIR = saved;
+    }
+});
+
+test('every command gated behind a directory change is refused after one, and the reason names the change', () => {
+    for (const gated of ['git log -1', 'node --test .claude/hooks/tests/', 'nodejs --test .claude/hooks/tests/', 'bats tests/unit', 'actionlint']) {
+        const r = checkCommand(`cd /tmp && ${gated}`);
+        assert.ok(r?.blocked, gated);
+        assert.match(r.reason, new RegExp(`^Blocked: a directory change in this command line \\(\`cd /tmp\`\\) may move the shell out of this checkout before \`${gated.split(' ')[0]}\` runs, `));
+    }
+    const { reason } = checkCommand('cd tests extra && git log -1');
+    assert.match(reason, /\(`cd tests extra`\)/);
+    assert.match(reason, /and every operand check here resolves paths against the checkout: `cd \/some\/dir && git diff -- a\.env b` passes as two in-tree operands, then git runs outside any repository, falls back to --no-index on its own and prints both files\. It is the shell's spelling of `git -C DIR`\. A cd to the project root \(`cd "\$CLAUDE_PROJECT_DIR"`\) or into a literal relative path inside the checkout \(`cd tests`\) is not refused; otherwise run the command from the checkout and name the paths\./);
+});
+
+test('a CDPATH in the environment makes a relative cd count as leaving, but ./ stays inside', () => {
+    const saved = process.env.CDPATH;
+    process.env.CDPATH = '/tmp';
+    try {
+        assert.ok(checkCommand('cd tests && git log -1')?.blocked);
+        assert.equal(checkCommand('cd ./tests && git log -1'), null);
+    } finally {
+        if (saved === undefined) delete process.env.CDPATH;
+        else process.env.CDPATH = saved;
+    }
+});
+
+test('a project directory that does not exist is taken as written, and a cd inside it stays allowed', () => {
+    const saved = process.env.CLAUDE_PROJECT_DIR;
+    process.env.CLAUDE_PROJECT_DIR = '/nosuchroot-appbox/project';
+    try {
+        assert.equal(checkCommand('cd tests && git log -1'), null);
+        // an absolute target that cannot be resolved counts as leaving
+        assert.ok(checkCommand('cd /nosuchroot-appbox/project && git log -1')?.blocked);
+        assert.ok(checkCommand('cd /nosuchroot-appbox && git log -1')?.blocked);
+        assert.ok(checkCommand('cd tests/.. && git log -1')?.blocked);
     } finally {
         if (saved === undefined) delete process.env.CLAUDE_PROJECT_DIR;
         else process.env.CLAUDE_PROJECT_DIR = saved;

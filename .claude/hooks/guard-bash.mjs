@@ -463,7 +463,7 @@ function assignedNameRefusal(cmd, name) {
 // a subshell, so `( echo PATH )` names nothing.
 const ARITHMETIC_NAME = /(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*/g;
 
-function arithmeticNames(input) {
+export function arithmeticNames(input) {
     const names = [];
     let inSingle = false;
     let inDouble = false;
@@ -525,7 +525,7 @@ function checkoutRoot() {
 }
 
 /** True when this tokenized segment runs a cd, pushd or popd that may leave the checkout. */
-function leavesCheckout(words, cdpath) {
+export function leavesCheckout(words, cdpath) {
     if (!changesDirectory(words)) return false;
     const at = words.findIndex((x) => CHDIR.has(basename(x)));
     // Spelled in a way this cannot read (`$X sub`, `{cd,} sub`, a wildcard).
