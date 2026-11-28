@@ -580,6 +580,14 @@ const blocked = [
     ['$X tests && git log -1', /running \$X/],
     ['cd tests extra && git log -1', /directory change/],
     ['echo "$(( PATH = 1 ))"; git log -1', /HOME, XDG_CONFIG_HOME or PATH/],
+    // an apostrophe in a comment, an unquoted here-document body or a
+    // here-string opens no quote, so the arithmetic or substitution after it
+    // is still read
+    ["git log -1 # it's the last one\n(( PATH = 1 ))\ngit log -1", /HOME, XDG_CONFIG_HOME or PATH/],
+    ["git log -1 <<EOF\nit's\nEOF\n(( HOME = 1 ))\ngit log -p -1", /HOME, XDG_CONFIG_HOME or PATH/],
+    ["git log -1 <<< 'x'\n(( PATH = 1 ))\ngit log -1", /HOME, XDG_CONFIG_HOME or PATH/],
+    ["cat <<EOF\nit's\n$(( PATH = 1 ))\nEOF\ngit log -1", /HOME, XDG_CONFIG_HOME or PATH/],
+    ["git log -1 # it's the last one\necho $(git log --output=x -1)", /writes a file/],
     // a builtin that assigns another name still has its other words read
     ["for f in 'distrobox rm apps'; do echo x; done", /distrobox rm/],
     ["/usr/bin/printf -v out 'distrobox rm apps'", /distrobox rm/],
@@ -675,8 +683,15 @@ test('arithmeticNames reads the names between (( and the paren that closes them,
         // here-documents: a quoted body is data, an unquoted one is not, and a here-string has no body
         ["cat <<'EOF'\n(( a ))\nEOF\n(( b ))", ['b']],
         ["cat <<'EOF' ; echo\n(( a ))\nEOF\n(( b ))", ['b']],
-        ["cat <<'EOF'\n(( a ))", []],
-        ['cat <<EOF\n(( a ))\nEOF\n(( b ))', ['a', 'b']],
+        // an unterminated quoted body is read, which only refuses more
+        ["cat <<'EOF'\n(( a ))", ['a']],
+        // an unquoted body is read like double-quoted text: only `$((` is arithmetic there
+        ['cat <<EOF\n(( a ))\nEOF\n(( b ))', ['b']],
+        ['cat <<EOF\n$(( a ))\nEOF\n(( b ))', ['a', 'b']],
+        ["cat <<EOF\nit's\nEOF\n(( b ))", ['b']],
+        // a comment and a here-string open no quote
+        ["echo # it's\n(( a ))", ['a']],
+        ["cat <<< 'x'\n(( a ))", ['a']],
         ['cat <<< x; (( a ))', ['a']],
         // the body starts at the end of the command line, not at a newline inside quotes or at the first word after the <<
         ["cat <<'EOF' \"x\ny\"\n(( x ))\nEOF\n(( y ))", ['y']],

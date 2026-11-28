@@ -161,8 +161,8 @@ import {
     commandStrings, EXEC_GIT_CONFIG,
     expandWrapperOptions, extractSubstitutions, FIND_EXEC, fishScripts, firstWord, GIT_EXEC_OPTION, GIT_SHORT_UPLOAD_PACK,
     GIT_UPLOAD_PACK_OPTION, GIT_UPLOAD_PACK_SUBCOMMANDS, globMatches, isAssignment, KEYWORDS, MAX_UNLISTED_INNER,
-    OverBudget, readAnsiC, readHeredocStart, REFUSED_GIT_OPTION, RISKY_GIT_CONFIG, riskyEnv, SAFE_ENV, SHELLS, skipHeredocBody,
-    spend, startBudget, tokenize, unquoted, WRAPPERS, wrapperTarget,
+    OverBudget, REFUSED_GIT_OPTION, RISKY_GIT_CONFIG, riskyEnv, SAFE_ENV, SHELLS,
+    spend, startBudget, tokenize, unquoted, walkExpanded, WRAPPERS, wrapperTarget,
 } from './shell-reader.mjs';
 
 export { BUDGET_MS, tokenize } from './shell-reader.mjs';
@@ -459,38 +459,21 @@ function assignedNameRefusal(cmd, name) {
 // from the command line: every whole name between `((` and the paren that
 // closes them counts as assigned. A name that is only read counts too, which
 // only refuses more. Single-quoted text and quoted here-document bodies are
-// data, and inside double quotes only `$((` is arithmetic. A single `(` opens
-// a subshell, so `( echo PATH )` names nothing.
+// data, and inside double quotes only `$((` is arithmetic. A comment, an
+// unquoted here-document body and a here-string are read by the shared
+// reader's walkExpanded, so an apostrophe in them opens no quote that would
+// hide a later `(( PATH = 1 ))`. A single `(` opens a subshell, so
+// `( echo PATH )` names nothing.
 const ARITHMETIC_NAME = /(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*/g;
 
 export function arithmeticNames(input) {
     const names = [];
-    let inSingle = false;
-    let inDouble = false;
-    const pending = []; // here-documents started on the current line
-    for (let i = 0; i < input.length; i++) {
-        const c = input[i];
-        if (c === '\\' && !inSingle) {
-            i++;
-        } else if (c === '$' && input[i + 1] === "'" && !inSingle && !inDouble) {
-            i = readAnsiC(input, i + 2).next - 1;
-        } else if (c === "'" && !inDouble) {
-            inSingle = !inSingle;
-        } else if (c === '"' && !inSingle) {
-            inDouble = !inDouble;
-        } else if (!inSingle && !inDouble && c === '<' && input[i + 1] === '<' && input[i + 2] !== '<') {
-            const h = readHeredocStart(input, i);
-            if (h.delim) pending.push(h);
-            i = h.next - 1;
-        } else if (!inSingle && !inDouble && c === '\n' && pending.length) {
-            while (pending.length && pending[0].quoted) i = skipHeredocBody(input, i + 1, pending.shift().delim) - 1;
-            pending.length = 0;
-        } else if (!inSingle && c === '(' && input[i + 1] === '(' && (!inDouble || input[i - 1] === '$')) {
-            const end = closeParen(input, i + 1);
-            names.push(...(input.slice(i + 2, end).match(ARITHMETIC_NAME) ?? []));
-            i = end - 1;
-        }
-    }
+    walkExpanded(input, (text, i, inDouble) => {
+        if (text[i] !== '(' || text[i + 1] !== '(' || (inDouble && text[i - 1] !== '$')) return undefined;
+        const end = closeParen(text, i + 1);
+        names.push(...(text.slice(i + 2, end).match(ARITHMETIC_NAME) ?? []));
+        return end;
+    });
     return names;
 }
 
