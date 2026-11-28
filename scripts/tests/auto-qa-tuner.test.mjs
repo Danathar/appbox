@@ -15,6 +15,7 @@ import {
     parseMeasurement,
     percentile,
     propose,
+    renderReport,
     validateTuning,
 } from '../auto-qa-tuner.mjs';
 
@@ -69,6 +70,21 @@ test('validateTuning rejects out-of-bounds values and bad rules', () => {
     const v = tuning();
     delete v.nightly.image_max_age_days.max;
     assert.throws(() => validateTuning(v), /integer value, min and max/);
+});
+
+test('validateTuning rejects rules that need more runs than the window holds', () => {
+    const msg = /rules.min_runs and rules.lower_retries_after_clean_runs must not exceed rules.window_runs/;
+    const minRuns = tuning();
+    minRuns.rules.min_runs = 21;
+    assert.throws(() => validateTuning(minRuns), msg);
+    const clean = tuning();
+    clean.rules.lower_retries_after_clean_runs = 21;
+    assert.throws(() => validateTuning(clean), msg);
+    // Equal to the window is allowed.
+    const edge = tuning();
+    edge.rules.min_runs = 20;
+    edge.rules.lower_retries_after_clean_runs = 20;
+    assert.doesNotThrow(() => validateTuning(edge));
 });
 
 test('annotations are parsed; other titles are ignored', () => {
@@ -138,6 +154,25 @@ test('a short outage does not loosen the staleness threshold', () => {
     // Two of ten nights saw a very old image (failed builds); p75 is still healthy.
     const r = propose(tuning({ age: 2 }), runs(10, { ageHours: (i) => (i < 2 ? 120 : 5), ops: () => [op('pull', 2)] }));
     assert.deepEqual(r.changes, []);
+});
+
+test('too few image-age readings: the staleness threshold is left alone', () => {
+    // Ten runs measured registry operations, but none recorded the image age.
+    const r = propose(tuning({ age: 4 }), runs(10, { ageHours: null, ops: () => [op('pull', 2)] }));
+    assert.equal(r.measured, 10);
+    assert.deepEqual(r.changes, []);
+    assert.equal(r.proposed.nightly.image_max_age_days.value, 4);
+    assert.match(r.notes.join('\n'), /Only 0 run\(s\) recorded the image age; the staleness threshold is left alone\./);
+});
+
+test('renderReport says no change is proposed and shows the current values', () => {
+    const t = tuning({ age: 2 });
+    const rs = runs(10, { ops: () => [op('pull', 2)] });
+    const result = propose(t, rs);
+    assert.deepEqual(result.changes, []);
+    const report = renderReport(result, rs, t);
+    assert.match(report, /^No change proposed\. Current values: image_max_age_days 2, network_retries 2\.$/m);
+    assert.doesNotMatch(report, /\| Value \| Now \| Proposed \| Why \|/);
 });
 
 test('job failure rates per job name', () => {
